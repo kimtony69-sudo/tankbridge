@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Truck, ShieldCheck, Clock, CheckCircle2, XCircle, FileSignature,
   ChevronRight, LogIn, Search, Plus, MapPin, Building2,
-  BadgeCheck, AlertTriangle, ArrowLeft, Mail, Phone, Lock, LogOut
+  BadgeCheck, AlertTriangle, ArrowLeft, Mail, Phone, Lock, LogOut, Menu, X
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -28,8 +28,7 @@ const EMPTY_REG = {
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: "COC", location: "", availability: "", notes: "", procedure: "" };
 const EMPTY_REFERRAL = {
-  buyerCompanyName: "", buyerCipc: "",
-  sellerCompanyName: "", sellerCipc: "", sellerDmreLicense: "",
+  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: "COC", notes: "",
 };
 
@@ -50,7 +49,7 @@ const STYLE = `
 .gnt .mono { font-family:'IBM Plex Mono',monospace; }
 
 .gnt-header { position:sticky; top:0; z-index:30; background:var(--ink); color:var(--paper); border-bottom:3px solid var(--amber); }
-.gnt-header-inner { max-width:1180px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.gnt-header-inner { max-width:1180px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; position:relative; }
 .gnt-brand { display:flex; align-items:center; gap:10px; cursor:pointer; }
 .gnt-brand-mark { width:34px; height:34px; border:2px solid var(--amber); display:flex; align-items:center; justify-content:center; transform:rotate(45deg); flex-shrink:0; }
 .gnt-brand-mark svg { transform:rotate(-45deg); }
@@ -61,6 +60,7 @@ const STYLE = `
 .gnt-nav button:hover { opacity:1; }
 .gnt-nav button.active { opacity:1; border-bottom:2px solid var(--amber); }
 .gnt-nav .admin-link { opacity:0.45; font-family:'IBM Plex Mono',monospace; font-size:11px; }
+.gnt-mobile-toggle { display:none; background:none; border:1.5px solid rgba(236,232,222,0.4); color:var(--paper); padding:8px 10px; cursor:pointer; align-items:center; justify-content:center; }
 
 .gnt-main { max-width:1180px; margin:0 auto; padding:0 20px 80px; }
 
@@ -179,7 +179,15 @@ const STYLE = `
   .gnt-grid3{grid-template-columns:1fr;}
   .gnt-grid2{grid-template-columns:1fr;}
   .gnt-detail-grid{grid-template-columns:1fr;}
-  .gnt-nav{display:none;}
+  .gnt-nav{
+    display:none; position:absolute; top:100%; left:0; right:0; z-index:40;
+    flex-direction:column; align-items:stretch; gap:0;
+    background:var(--ink); border-top:1px solid rgba(236,232,222,0.15);
+    padding:6px 20px 14px; box-shadow:0 12px 20px rgba(0,0,0,0.25);
+  }
+  .gnt-nav.mobile-open{ display:flex; }
+  .gnt-nav button{ text-align:left; padding:12px 4px; border-bottom:1px solid rgba(236,232,222,0.1); }
+  .gnt-mobile-toggle{ display:inline-flex; }
 }
 `;
 
@@ -273,6 +281,7 @@ export default function App() {
   const [companyChecked, setCompanyChecked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [toast, setToast] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [boardListings, setBoardListings] = useState([]);
   const [myListings, setMyListings] = useState([]);
@@ -316,7 +325,7 @@ export default function App() {
   const [detailCompany, setDetailCompany] = useState(null);
 
   const showToast = (msg, kind = "ok") => { setToast({ msg, kind }); setTimeout(() => setToast(null), 3500); };
-  function goto(v) { setView(v); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  function goto(v) { setView(v); setMobileMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -396,7 +405,7 @@ export default function App() {
     }
     if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
     if (regType === "broker") return ""; // Brokers don't need their own trade volume/price info
-    if (!regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
+    if (regType === "seller" && !regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
     if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price you want to trade.";
     if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
     if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
@@ -421,7 +430,7 @@ export default function App() {
       type: regType,
       company_name: regForm.companyName,
       cipc: regForm.cipc,
-      dmre_license: regType === "broker" ? null : regForm.dmreLicense,
+      dmre_license: regType === "seller" ? regForm.dmreLicense : null,
       address: regForm.address,
       contact_name: regForm.contactName,
       phone: regForm.phone,
@@ -543,8 +552,11 @@ export default function App() {
   async function submitReferral(e) {
     e.preventDefault();
     const f = referralForm;
-    if (!f.buyerCompanyName || !f.buyerCipc || !f.sellerCompanyName || !f.sellerCipc || !f.sellerDmreLicense || !f.volume || !f.unitPrice || !f.location || !f.terms) {
-      setReferralError("Please complete all required fields — buyer company/CIPC and seller company/CIPC/DMRE are all required."); return;
+    if (!f.referredCompanyName || !f.referredCipc || !f.volume || !f.unitPrice || !f.location || !f.terms) {
+      setReferralError("Please complete all required fields."); return;
+    }
+    if (f.referredType === "seller" && !f.referredDmreLicense) {
+      setReferralError("DMRE wholesale license is required when referring a seller."); return;
     }
     if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
     if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
@@ -552,11 +564,10 @@ export default function App() {
     const resolvedLocation = f.location === "Other" ? f.locationOther.trim() : f.location;
     const { error } = await supabase.from("referrals").insert({
       broker_company_id: myCompany.id,
-      buyer_company_name: f.buyerCompanyName,
-      buyer_cipc: f.buyerCipc,
-      seller_company_name: f.sellerCompanyName,
-      seller_cipc: f.sellerCipc,
-      seller_dmre_license: f.sellerDmreLicense,
+      referred_type: f.referredType,
+      referred_company_name: f.referredCompanyName,
+      referred_cipc: f.referredCipc,
+      referred_dmre_license: f.referredType === "seller" ? f.referredDmreLicense : null,
       product: f.product,
       volume: Number(f.volume),
       unit_price: Number(f.unitPrice),
@@ -572,7 +583,7 @@ export default function App() {
     setReferralAgree(false);
     setReferralName("");
     await loadMyReferrals();
-    showToast("Referral submitted for admin verification (CIPC/DMRE) — it will appear on the Market Board once approved.");
+    showToast("Referral submitted for admin verification — it will appear on the Market Board once approved.");
   }
 
   // ---------- MARKET / ACCEPT ----------
@@ -638,7 +649,7 @@ export default function App() {
     if (error) { showToast(error.message, "err"); return; }
     await loadAdminData();
     showToast(status === "approved"
-      ? `Verified — ${referral.seller_company_name}'s listing is now live on the Market Board.`
+      ? `Verified — ${referral.referred_company_name}'s listing is now live on the Market Board.`
       : `Referral rejected.`);
   }
 
@@ -670,7 +681,7 @@ export default function App() {
               <div className="gnt-brand-sub">Bulk Diesel Exchange · ZA</div>
             </div>
           </div>
-          <nav className="gnt-nav">
+          <nav className={`gnt-nav ${mobileMenuOpen ? "mobile-open" : ""}`}>
             <button className={view === "landing" ? "active" : ""} onClick={() => goto("landing")}>Home</button>
             <button className={view === "market" ? "active" : ""} onClick={() => goto("market")}>Market Board</button>
             <button className={view === "register" ? "active" : ""} onClick={resetRegFlow}>Register</button>
@@ -678,6 +689,9 @@ export default function App() {
             <button className="admin-link" onClick={() => goto("admin")}>Admin</button>
             {session && <button className="admin-link" onClick={signOut}><LogOut size={12} style={{ verticalAlign: "middle" }} /> Sign out</button>}
           </nav>
+          <button className="gnt-mobile-toggle" onClick={() => setMobileMenuOpen(o => !o)} aria-label="Menu">
+            {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
         </div>
       </header>
 
@@ -807,7 +821,7 @@ export default function App() {
                 <div className="gnt-field"><label>{regType === "broker" ? "Agency / company name" : "Company name"}</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
                 <div className="gnt-grid2">
                   <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                  {regType !== "broker" && (
+                  {regType === "seller" && (
                     <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
                   )}
                 </div>
@@ -1068,20 +1082,19 @@ export default function App() {
               {myCompany.status === "approved" && myCompany.type === "broker" && (
                 <>
                   <h3 style={{ fontSize: 22, marginBottom: 4 }}>Add a referral</h3>
-                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Introduce a matched buyer and seller. Admin verifies both companies' CIPC/DMRE details before the seller's listing goes live on the Market Board. Commission is 30% of Tankbridge's brokerage fee on any matched deal, payable once admin links your referral to that deal.</p>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Register a buyer or seller you represent — submit as many as you like, for either side. Admin verifies CIPC (and DMRE for sellers) before it goes live on the Market Board. Commission is 30% of Tankbridge's brokerage fee on any matched deal, payable once admin links your referral to that deal.</p>
                   {referralError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {referralError}</div>}
                   <form onSubmit={submitReferral} className="gnt-card" style={{ marginBottom: 30 }}>
-                    <h4 style={{ fontSize: 16, marginBottom: 8 }}>Buyer</h4>
-                    <div className="gnt-grid2">
-                      <div className="gnt-field"><label>Buyer company name</label><input value={referralForm.buyerCompanyName} onChange={e => updateReferralField("buyerCompanyName", e.target.value)} placeholder="Company you're introducing as buyer" /></div>
-                      <div className="gnt-field"><label>Buyer CIPC registration number</label><input className="mono" value={referralForm.buyerCipc} onChange={e => updateReferralField("buyerCipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                    <div className="gnt-type-toggle">
+                      <button type="button" className={referralForm.referredType === "seller" ? "active" : ""} onClick={() => updateReferralField("referredType", "seller")}>Referring a Seller</button>
+                      <button type="button" className={referralForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReferralField("referredType", "buyer")}>Referring a Buyer</button>
                     </div>
-
-                    <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Seller</h4>
-                    <div className="gnt-field"><label>Seller company name</label><input value={referralForm.sellerCompanyName} onChange={e => updateReferralField("sellerCompanyName", e.target.value)} placeholder="Company you're introducing as seller" /></div>
+                    <div className="gnt-field"><label>{referralForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={referralForm.referredCompanyName} onChange={e => updateReferralField("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
                     <div className="gnt-grid2">
-                      <div className="gnt-field"><label>Seller CIPC registration number</label><input className="mono" value={referralForm.sellerCipc} onChange={e => updateReferralField("sellerCipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                      <div className="gnt-field"><label>Seller DMRE wholesale license no.</label><input className="mono" value={referralForm.sellerDmreLicense} onChange={e => updateReferralField("sellerDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                      <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={referralForm.referredCipc} onChange={e => updateReferralField("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                      {referralForm.referredType === "seller" && (
+                        <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={referralForm.referredDmreLicense} onChange={e => updateReferralField("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                      )}
                     </div>
 
                     <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Trade details</h4>
@@ -1113,7 +1126,7 @@ export default function App() {
 
                     <div className="gnt-doc-box" style={{ maxHeight: 200 }}>
                       <h4>Referral Agreement</h4>
-                      <p>By submitting this referral, {myCompany.company_name} ("Broker") confirms it is introducing the above buyer and seller to Tankbridge in good faith, and that the CIPC/DMRE details provided are accurate to the best of Broker's knowledge. If Tankbridge concludes a deal involving this referral, Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete.</p>
+                      <p>By submitting this referral, {myCompany.company_name} ("Broker") confirms it is introducing the above party to Tankbridge in good faith, and that the CIPC/DMRE details provided are accurate to the best of Broker's knowledge. If Tankbridge concludes a deal involving this referral, Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete.</p>
                     </div>
                     <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
                       <input type="checkbox" checked={referralAgree} onChange={e => setReferralAgree(e.target.checked)} style={{ marginTop: 3 }} />
@@ -1130,7 +1143,10 @@ export default function App() {
                       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                         <div>
                           <span className={`gnt-badge ${r.status}`}>{r.status}</span>
-                          <div style={{ fontWeight: 600, marginTop: 6 }}>Buyer: {r.buyer_company_name} &nbsp;·&nbsp; Seller: {r.seller_company_name}</div>
+                          <div style={{ fontWeight: 600, marginTop: 6 }}>
+                            <span className={`gnt-badge ${r.referred_type === "seller" ? "selling" : "buying"}`} style={{ marginRight: 6 }}>{r.referred_type}</span>
+                            {r.referred_company_name}
+                          </div>
                           <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {r.terms} · {r.location}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
@@ -1293,18 +1309,17 @@ export default function App() {
 
               {adminTab === "referrals" && (
                 <table className="gnt-table">
-                  <thead><tr><th>Broker</th><th>Buyer</th><th>Seller</th><th>Deal / Terms</th><th>Verification</th><th>Linked deal</th><th>Commission</th></tr></thead>
+                  <thead><tr><th>Broker</th><th>Referred party</th><th>CIPC / DMRE</th><th>Deal / Terms</th><th>Verification</th><th>Linked deal</th><th>Commission</th></tr></thead>
                   <tbody>
                     {adminReferrals.map(r => (
                       <tr key={r.id}>
                         <td>{adminCompanies.find(c => c.id === r.broker_company_id)?.company_name}</td>
                         <td>
-                          <div style={{ fontWeight: 600 }}>{r.buyer_company_name}</div>
-                          <div className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>CIPC {r.buyer_cipc}</div>
+                          <span className={`gnt-badge ${r.referred_type === "seller" ? "selling" : "buying"}`}>{r.referred_type}</span>
+                          <div style={{ fontWeight: 600, marginTop: 4 }}>{r.referred_company_name}</div>
                         </td>
-                        <td>
-                          <div style={{ fontWeight: 600 }}>{r.seller_company_name}</div>
-                          <div className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>CIPC {r.seller_cipc}<br />DMRE {r.seller_dmre_license}</div>
+                        <td className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>
+                          CIPC {r.referred_cipc}{r.referred_dmre_license && <><br />DMRE {r.referred_dmre_license}</>}
                         </td>
                         <td>{r.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(r.volume).toLocaleString()} ℓ @ {fmtMoney(r.unit_price)} · {r.terms} · {r.location}</span></td>
                         <td>
