@@ -24,9 +24,14 @@ function fmtMoney(n) {
 
 const EMPTY_REG = {
   companyName: "", cipc: "", dmreLicense: "", address: "", contactName: "", phone: "", email: "",
-  tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: TRADE_TERMS[0],
+  product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: TRADE_TERMS[0],
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: "COC", location: "", availability: "", notes: "", procedure: "" };
+const EMPTY_REFERRAL = {
+  buyerCompanyName: "", buyerCipc: "",
+  sellerCompanyName: "", sellerCipc: "", sellerDmreLicense: "",
+  product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: "COC", notes: "",
+};
 
 const STYLE = `
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -199,18 +204,18 @@ function LoginGate({ onSent }) {
     return (
       <div className="gnt-card" style={{ textAlign: "center", padding: 28 }}>
         <Mail size={26} style={{ marginBottom: 10 }} />
-        <p style={{ fontSize: 14 }}>{email} 주소로 로그인 링크를 보냈습니다. 메일함을 확인해서 링크를 눌러주세요. 이 탭은 그대로 열어두세요.</p>
+        <p style={{ fontSize: 14 }}>We've sent a login link to {email}. Check your inbox and click the link — keep this tab open.</p>
       </div>
     );
   }
 
   return (
     <form onSubmit={send} className="gnt-card" style={{ maxWidth: 420 }}>
-      <h3 style={{ fontSize: 18, marginBottom: 10 }}>이메일로 로그인 / 가입</h3>
-      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>비밀번호가 필요 없습니다. 이메일로 받은 링크를 누르면 바로 로그인됩니다.</p>
+      <h3 style={{ fontSize: 18, marginBottom: 10 }}>Sign in / Register with email</h3>
+      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>No password needed. Click the link we email you and you're signed in.</p>
       {err && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {err}</div>}
-      <div className="gnt-field"><label>이메일</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.co.za" /></div>
-      <button className="gnt-btn gnt-btn-ink" type="submit"><LogIn size={15} /> 로그인 링크 받기</button>
+      <div className="gnt-field"><label>Email</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.co.za" /></div>
+      <button className="gnt-btn gnt-btn-ink" type="submit"><LogIn size={15} /> Send login link</button>
     </form>
   );
 }
@@ -275,6 +280,16 @@ export default function App() {
   const [adminCompanies, setAdminCompanies] = useState([]);
   const [adminDeals, setAdminDeals] = useState([]);
   const [adminListings, setAdminListings] = useState([]);
+  const [adminReferrals, setAdminReferrals] = useState([]);
+  const [linkDealFor, setLinkDealFor] = useState(null); // referral being linked to a deal
+  const [linkDealChoice, setLinkDealChoice] = useState("");
+  const [commissionEdits, setCommissionEdits] = useState({}); // dealId -> input value
+
+  const [myReferrals, setMyReferrals] = useState([]);
+  const [referralForm, setReferralForm] = useState(EMPTY_REFERRAL);
+  const [referralError, setReferralError] = useState("");
+  const [referralAgree, setReferralAgree] = useState(false);
+  const [referralName, setReferralName] = useState("");
 
   const [regType, setRegType] = useState("seller");
   const [regStep, setRegStep] = useState("form"); // form -> login -> ncnda -> done
@@ -348,19 +363,27 @@ export default function App() {
     setMyDeals(data || []);
   }, [myCompany]);
 
-  useEffect(() => { loadMyListings(); loadMyDeals(); }, [loadMyListings, loadMyDeals]);
+  const loadMyReferrals = useCallback(async () => {
+    if (!myCompany || myCompany.type !== "broker") return;
+    const { data } = await supabase.from("referrals").select("*").eq("broker_company_id", myCompany.id).order("created_at", { ascending: false });
+    setMyReferrals(data || []);
+  }, [myCompany]);
+
+  useEffect(() => { loadMyListings(); loadMyDeals(); loadMyReferrals(); }, [loadMyListings, loadMyDeals, loadMyReferrals]);
 
   // ---------- ADMIN DATA ----------
   const loadAdminData = useCallback(async () => {
     if (!isAdmin) return;
-    const [{ data: cos }, { data: deals }, { data: listings }] = await Promise.all([
+    const [{ data: cos }, { data: deals }, { data: listings }, { data: referrals }] = await Promise.all([
       supabase.from("companies").select("*").order("created_at", { ascending: false }),
       supabase.from("deals").select("*").order("created_at", { ascending: false }),
       supabase.from("listings").select("*").order("created_at", { ascending: false }),
+      supabase.from("referrals").select("*").order("created_at", { ascending: false }),
     ]);
     setAdminCompanies(cos || []);
     setAdminDeals(deals || []);
     setAdminListings(listings || []);
+    setAdminReferrals(referrals || []);
   }, [isAdmin]);
   useEffect(() => { loadAdminData(); }, [loadAdminData]);
 
@@ -368,13 +391,15 @@ export default function App() {
   function updateReg(field, value) { setRegForm(f => ({ ...f, [field]: value })); }
 
   function validateRegForm() {
-    if (!regForm.companyName || !regForm.cipc || !regForm.dmreLicense || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email) {
-      return "모든 항목을 입력해주세요 (CIPC, DMRE 번호는 필수입니다).";
+    if (!regForm.companyName || !regForm.cipc || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email) {
+      return "Please complete all fields (CIPC number is required).";
     }
-    if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "올바른 이메일 주소를 입력해주세요.";
-    if (!regForm.tradeVolume || !regForm.tradePrice) return "구매/판매하려는 물량과 가격을 입력해주세요.";
-    if (Number(regForm.tradeVolume) < 40000) return "최소 거래 물량은 40,000리터입니다.";
-    if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "장소를 입력해주세요.";
+    if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
+    if (regType === "broker") return ""; // Brokers don't need their own trade volume/price info
+    if (!regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
+    if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price you want to trade.";
+    if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
+    if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
     return "";
   }
 
@@ -388,31 +413,48 @@ export default function App() {
 
   async function finalizeRegistration(e) {
     e.preventDefault();
-    if (!ncndaAgree || ncndaName.trim().length < 3) { setRegError("NCNDA에 동의하고 성명을 입력해주세요."); return; }
-    if (!session) { setRegError("로그인이 필요합니다."); return; }
+    if (!ncndaAgree || ncndaName.trim().length < 3) { setRegError("Please accept the NCNDA and enter your full name."); return; }
+    if (!session) { setRegError("You need to be logged in."); return; }
     const resolvedLocation = regForm.tradeLocation === "Other" ? regForm.tradeLocationOther.trim() : regForm.tradeLocation;
     const { data, error } = await supabase.from("companies").insert({
       user_id: session.user.id,
       type: regType,
       company_name: regForm.companyName,
       cipc: regForm.cipc,
-      dmre_license: regForm.dmreLicense,
+      dmre_license: regType === "broker" ? null : regForm.dmreLicense,
       address: regForm.address,
       contact_name: regForm.contactName,
       phone: regForm.phone,
       email: regForm.email,
-      trade_volume: Number(regForm.tradeVolume),
-      trade_price: Number(regForm.tradePrice),
-      trade_location: resolvedLocation,
-      trade_terms: regForm.tradeTerms,
+      trade_volume: regType === "broker" ? null : Number(regForm.tradeVolume),
+      trade_price: regType === "broker" ? null : Number(regForm.tradePrice),
+      trade_location: regType === "broker" ? null : resolvedLocation,
+      trade_terms: regType === "broker" ? null : regForm.tradeTerms,
       ncnda_signed: true,
       ncnda_signed_by: ncndaName,
       ncnda_signed_at: new Date().toISOString(),
     }).select().single();
     if (error) { setRegError(error.message); return; }
+
+    // Buyers/sellers get their signup volume/price/location auto-published as their first listing
+    // (this listing flips to active automatically when admin approves the company)
+    if (regType !== "broker") {
+      await supabase.from("listings").insert({
+        company_id: data.id,
+        kind: regType === "seller" ? "sell" : "buy",
+        product: regForm.product,
+        volume: Number(regForm.tradeVolume),
+        unit_price: Number(regForm.tradePrice),
+        terms: regForm.tradeTerms,
+        location: resolvedLocation,
+        availability: "Immediate",
+        status: "pending",
+      });
+    }
+
     setMyCompany(data);
     setRegStep("done");
-    showToast("등록 완료 — 관리자에게 통보되었습니다.");
+    showToast("Registration submitted — Tankbridge admin has been notified.");
   }
 
   function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); goto("register"); }
@@ -424,9 +466,9 @@ export default function App() {
     e.preventDefault();
     const vol = Number(listingForm.volume);
     if (!listingForm.product || !listingForm.volume || !listingForm.unitPrice || !listingForm.location || !listingForm.availability) {
-      setListingError("모든 필수 항목을 입력해주세요."); return;
+      setListingError("Please complete all required fields."); return;
     }
-    if (vol < 40000) { setListingError("최소 거래 물량은 40,000리터입니다."); return; }
+    if (vol < 40000) { setListingError("Minimum tradable volume is 40,000 litres."); return; }
     setListingError("");
     const { error } = await supabase.from("listings").insert({
       company_id: myCompany.id,
@@ -444,7 +486,7 @@ export default function App() {
     setListingForm(EMPTY_LISTING);
     await loadMyListings();
     await loadMarketBoard();
-    showToast("매물이 Market Board에 등록되었습니다.");
+    showToast("Listing published to the Market Board.");
   }
 
   function startEdit(listing) { setEditingListing({ ...listing, volume: String(listing.volume), unit_price: String(listing.unit_price) }); setEditError(""); }
@@ -455,9 +497,9 @@ export default function App() {
     e.preventDefault();
     const vol = Number(editingListing.volume);
     if (!editingListing.product || !editingListing.volume || !editingListing.unit_price || !editingListing.location || !editingListing.availability) {
-      setEditError("모든 필수 항목을 입력해주세요."); return;
+      setEditError("Please complete all required fields."); return;
     }
-    if (vol < 40000) { setEditError("최소 거래 물량은 40,000리터입니다."); return; }
+    if (vol < 40000) { setEditError("Minimum tradable volume is 40,000 litres."); return; }
     const { error } = await supabase.from("listings").update({
       volume: vol,
       unit_price: Number(editingListing.unit_price),
@@ -471,7 +513,7 @@ export default function App() {
     setEditingListing(null);
     await loadMyListings();
     await loadMarketBoard();
-    showToast("매물이 수정되었습니다.");
+    showToast("Listing updated.");
   }
 
   async function deleteListing(id) {
@@ -483,7 +525,7 @@ export default function App() {
   // ---------- IMFPA (dashboard, sellers) ----------
   async function submitDashboardImfpa(e) {
     e.preventDefault();
-    if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("IMFPA에 동의하고 성명을 입력해주세요."); return; }
+    if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
     setListingError("");
     const { error } = await supabase.rpc("sign_imfpa", { p_signed_by: imfpaName });
     if (error) { setListingError(error.message); return; }
@@ -492,7 +534,45 @@ export default function App() {
     setShowImfpaForm(false);
     setImfpaAgree(false);
     setImfpaName("");
-    showToast("IMFPA 서명 완료 — 매칭된 딜의 바이어 연락처가 공개됩니다.");
+    showToast("IMFPA signed — buyer contact details on matched deals are now released.");
+  }
+
+  // ---------- REFERRALS (broker) ----------
+  function updateReferralField(field, value) { setReferralForm(f => ({ ...f, [field]: value })); }
+
+  async function submitReferral(e) {
+    e.preventDefault();
+    const f = referralForm;
+    if (!f.buyerCompanyName || !f.buyerCipc || !f.sellerCompanyName || !f.sellerCipc || !f.sellerDmreLicense || !f.volume || !f.unitPrice || !f.location || !f.terms) {
+      setReferralError("Please complete all required fields — buyer company/CIPC and seller company/CIPC/DMRE are all required."); return;
+    }
+    if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
+    if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
+    setReferralError("");
+    const resolvedLocation = f.location === "Other" ? f.locationOther.trim() : f.location;
+    const { error } = await supabase.from("referrals").insert({
+      broker_company_id: myCompany.id,
+      buyer_company_name: f.buyerCompanyName,
+      buyer_cipc: f.buyerCipc,
+      seller_company_name: f.sellerCompanyName,
+      seller_cipc: f.sellerCipc,
+      seller_dmre_license: f.sellerDmreLicense,
+      product: f.product,
+      volume: Number(f.volume),
+      unit_price: Number(f.unitPrice),
+      location: resolvedLocation,
+      terms: f.terms,
+      notes: f.notes,
+      agreement_accepted: true,
+      agreement_accepted_by: referralName,
+      agreement_accepted_at: new Date().toISOString(),
+    });
+    if (error) { setReferralError(error.message); return; }
+    setReferralForm(EMPTY_REFERRAL);
+    setReferralAgree(false);
+    setReferralName("");
+    await loadMyReferrals();
+    showToast("Referral submitted for admin verification (CIPC/DMRE) — it will appear on the Market Board once approved.");
   }
 
   // ---------- MARKET / ACCEPT ----------
@@ -504,7 +584,7 @@ export default function App() {
   function openAccept(listing) { setAcceptTarget(listing); setAcceptStep(1); setAcceptError(""); }
 
   async function submitAccept() {
-    if (!session) { setAcceptError("로그인이 필요합니다."); return; }
+    if (!session) { setAcceptError("You need to be logged in."); return; }
     const { data: deal, error } = await supabase.rpc("accept_listing_price", { p_listing_id: acceptTarget.id });
     if (error) { setAcceptError(error.message); return; }
     const isSellListing = acceptTarget.kind !== "buy";
@@ -519,7 +599,7 @@ export default function App() {
     setRevealedInfo(reveal);
     setAcceptTarget(null);
     await loadMyDeals();
-    showToast("딜이 기록되었고 관리자에게 통보되었습니다.");
+    showToast("Deal recorded — Tankbridge admin has been notified.");
   }
 
   // ---------- ADMIN ----------
@@ -528,7 +608,38 @@ export default function App() {
     if (error) { showToast(error.message, "err"); return; }
     setDetailCompany(null);
     await loadAdminData();
-    showToast(`${c.company_name} ${status === "approved" ? "승인" : "거절"}되었습니다.`);
+    showToast(`${c.company_name} was ${status === "approved" ? "approved" : "rejected"}.`);
+  }
+
+  function updateCommissionInput(dealId, value) { setCommissionEdits(f => ({ ...f, [dealId]: value })); }
+
+  async function saveCommission(dealId) {
+    const amount = Number(commissionEdits[dealId]);
+    if (!amount || amount <= 0) { showToast("Please enter a valid commission amount.", "err"); return; }
+    const { error } = await supabase.from("deals").update({ platform_commission_amount: amount }).eq("id", dealId);
+    if (error) { showToast(error.message, "err"); return; }
+    await supabase.rpc("recalculate_referral_commission", { p_deal_id: dealId });
+    await loadAdminData();
+    showToast("Platform commission saved — linked broker commission has been recalculated.");
+  }
+
+  async function linkReferralToDeal(referralId, dealId) {
+    if (!dealId) { showToast("Please select a deal to link.", "err"); return; }
+    const { error } = await supabase.rpc("link_referral_to_deal", { p_referral_id: referralId, p_deal_id: dealId });
+    if (error) { showToast(error.message, "err"); return; }
+    setLinkDealFor(null);
+    setLinkDealChoice("");
+    await loadAdminData();
+    showToast("Referral linked to the deal — commission has been calculated.");
+  }
+
+  async function setReferralStatus(referral, status) {
+    const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    showToast(status === "approved"
+      ? `Verified — ${referral.seller_company_name}'s listing is now live on the Market Board.`
+      : `Referral rejected.`);
   }
 
   const pendingCompanies = adminCompanies.filter(c => c.status === "pending");
@@ -689,13 +800,16 @@ export default function App() {
               <div className="gnt-type-toggle">
                 <button className={regType === "seller" ? "active" : ""} onClick={() => setRegType("seller")} type="button">I am a Seller</button>
                 <button className={regType === "buyer" ? "active" : ""} onClick={() => setRegType("buyer")} type="button">I am a Buyer</button>
+                <button className={regType === "broker" ? "active" : ""} onClick={() => setRegType("broker")} type="button">Broker (Referral)</button>
               </div>
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={submitRegForm}>
-                <div className="gnt-field"><label>Company name</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
+                <div className="gnt-field"><label>{regType === "broker" ? "Agency / company name" : "Company name"}</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
                 <div className="gnt-grid2">
                   <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                  <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                  {regType !== "broker" && (
+                    <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                  )}
                 </div>
                 <div className="gnt-field"><label>Company address</label><textarea rows={2} value={regForm.address} onChange={e => updateReg("address", e.target.value)} placeholder="Street, suburb, city, province" /></div>
                 <div className="gnt-grid2">
@@ -706,26 +820,37 @@ export default function App() {
                   <div className="hint">Use the same email you'll log in with.</div>
                 </div>
 
-                <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>{regType === "seller" ? "What are you looking to sell?" : "What are you looking to buy?"}</h3>
-                <div className="gnt-grid2">
-                  <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={regForm.tradeVolume} onChange={e => updateReg("tradeVolume", e.target.value)} placeholder="40000" /></div>
-                  <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={regForm.tradePrice} onChange={e => updateReg("tradePrice", e.target.value)} placeholder="21.45" /></div>
-                </div>
-                <div className="gnt-grid2">
-                  <div className="gnt-field"><label>Location</label>
-                    <select value={regForm.tradeLocation} onChange={e => updateReg("tradeLocation", e.target.value)}>
-                      {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                    </select>
-                    {regForm.tradeLocation === "Other" && (
-                      <input style={{ marginTop: 8 }} value={regForm.tradeLocationOther} onChange={e => updateReg("tradeLocationOther", e.target.value)} placeholder="Specify location" />
-                    )}
-                  </div>
-                  <div className="gnt-field"><label>Terms</label>
-                    <select value={regForm.tradeTerms} onChange={e => updateReg("tradeTerms", e.target.value)}>
-                      {TRADE_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                </div>
+                {regType === "broker" ? (
+                  <div className="gnt-info-banner"><CheckCircle2 size={16} /> Brokers don't trade directly — once approved, you'll add buyer/seller referrals from your Dashboard.</div>
+                ) : (
+                  <>
+                    <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>{regType === "seller" ? "What are you looking to sell?" : "What are you looking to buy?"}</h3>
+                    <div className="gnt-field"><label>Product</label>
+                      <select value={regForm.product} onChange={e => updateReg("product", e.target.value)}>
+                        {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={regForm.tradeVolume} onChange={e => updateReg("tradeVolume", e.target.value)} placeholder="40000" /></div>
+                      <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={regForm.tradePrice} onChange={e => updateReg("tradePrice", e.target.value)} placeholder="21.45" /></div>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Location</label>
+                        <select value={regForm.tradeLocation} onChange={e => updateReg("tradeLocation", e.target.value)}>
+                          {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                        </select>
+                        {regForm.tradeLocation === "Other" && (
+                          <input style={{ marginTop: 8 }} value={regForm.tradeLocationOther} onChange={e => updateReg("tradeLocationOther", e.target.value)} placeholder="Specify location" />
+                        )}
+                      </div>
+                      <div className="gnt-field"><label>Terms</label>
+                        <select value={regForm.tradeTerms} onChange={e => updateReg("tradeTerms", e.target.value)}>
+                          {TRADE_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </>
+                )}
                 <button className="gnt-btn gnt-btn-ink" type="submit" style={{ width: "100%", justifyContent: "center", marginTop: 6 }}>Continue <ChevronRight size={16} /></button>
               </form>
             </>
@@ -813,9 +938,13 @@ export default function App() {
                 </div>
                 <div className="gnt-detail-grid">
                   <div><div className="dt">CIPC No.</div><div className="dd">{myCompany.cipc}</div></div>
-                  <div><div className="dt">DMRE License</div><div className="dd">{myCompany.dmre_license}</div></div>
-                  <div><div className="dt">{myCompany.type === "seller" ? "Selling" : "Buying"}</div><div className="dd">{Number(myCompany.trade_volume).toLocaleString()} ℓ @ {fmtMoney(myCompany.trade_price)}/ℓ</div></div>
-                  <div><div className="dt">Location / Terms</div><div className="dd">{myCompany.trade_location} · {myCompany.trade_terms}</div></div>
+                  {myCompany.type !== "broker" && (
+                    <>
+                      <div><div className="dt">DMRE License</div><div className="dd">{myCompany.dmre_license}</div></div>
+                      <div><div className="dt">{myCompany.type === "seller" ? "Selling" : "Buying"}</div><div className="dd">{Number(myCompany.trade_volume).toLocaleString()} ℓ @ {fmtMoney(myCompany.trade_price)}/ℓ</div></div>
+                      <div><div className="dt">Location / Terms</div><div className="dd">{myCompany.trade_location} · {myCompany.trade_terms}</div></div>
+                    </>
+                  )}
                   <div><div className="dt">NCNDA</div><div className="dd">{myCompany.ncnda_signed ? `Signed by ${myCompany.ncnda_signed_by}` : "Not signed"}</div></div>
                   {myCompany.type === "seller" && (
                     <div><div className="dt">IMFPA</div><div className="dd">{myCompany.imfpa_signed ? `Signed by ${myCompany.imfpa_signed_by}` : "Not yet signed"}</div></div>
@@ -825,7 +954,7 @@ export default function App() {
                 {myCompany.status === "rejected" && <div className="gnt-alert-banner"><XCircle size={16} /> This registration was not approved. Contact Tankbridge admin.</div>}
               </div>
 
-              {myCompany.status === "approved" && (
+              {myCompany.status === "approved" && myCompany.type !== "broker" && (
                 <>
                   <h3 style={{ fontSize: 22, marginBottom: 4 }}>{myCompany.type === "seller" ? "List supply" : "Post a buy requirement"}</h3>
                   <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>You can publish as many listings as you like — one per location, volume or price.</p>
@@ -935,6 +1064,84 @@ export default function App() {
                   )}
                 </>
               )}
+
+              {myCompany.status === "approved" && myCompany.type === "broker" && (
+                <>
+                  <h3 style={{ fontSize: 22, marginBottom: 4 }}>Add a referral</h3>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Introduce a matched buyer and seller. Admin verifies both companies' CIPC/DMRE details before the seller's listing goes live on the Market Board. Commission is 30% of Tankbridge's brokerage fee on any matched deal, payable once admin links your referral to that deal.</p>
+                  {referralError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {referralError}</div>}
+                  <form onSubmit={submitReferral} className="gnt-card" style={{ marginBottom: 30 }}>
+                    <h4 style={{ fontSize: 16, marginBottom: 8 }}>Buyer</h4>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Buyer company name</label><input value={referralForm.buyerCompanyName} onChange={e => updateReferralField("buyerCompanyName", e.target.value)} placeholder="Company you're introducing as buyer" /></div>
+                      <div className="gnt-field"><label>Buyer CIPC registration number</label><input className="mono" value={referralForm.buyerCipc} onChange={e => updateReferralField("buyerCipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                    </div>
+
+                    <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Seller</h4>
+                    <div className="gnt-field"><label>Seller company name</label><input value={referralForm.sellerCompanyName} onChange={e => updateReferralField("sellerCompanyName", e.target.value)} placeholder="Company you're introducing as seller" /></div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Seller CIPC registration number</label><input className="mono" value={referralForm.sellerCipc} onChange={e => updateReferralField("sellerCipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                      <div className="gnt-field"><label>Seller DMRE wholesale license no.</label><input className="mono" value={referralForm.sellerDmreLicense} onChange={e => updateReferralField("sellerDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                    </div>
+
+                    <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Trade details</h4>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Product</label>
+                        <select value={referralForm.product} onChange={e => updateReferralField("product", e.target.value)}>
+                          {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                      <div className="gnt-field"><label>Terms</label>
+                        <select value={referralForm.terms} onChange={e => updateReferralField("terms", e.target.value)}>
+                          {TRADE_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={referralForm.volume} onChange={e => updateReferralField("volume", e.target.value)} /></div>
+                      <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={referralForm.unitPrice} onChange={e => updateReferralField("unitPrice", e.target.value)} /></div>
+                    </div>
+                    <div className="gnt-field"><label>Location</label>
+                      <select value={referralForm.location} onChange={e => updateReferralField("location", e.target.value)}>
+                        {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                      </select>
+                      {referralForm.location === "Other" && (
+                        <input style={{ marginTop: 8 }} value={referralForm.locationOther} onChange={e => updateReferralField("locationOther", e.target.value)} placeholder="Specify location" />
+                      )}
+                    </div>
+                    <div className="gnt-field"><label>Notes (optional)</label><textarea rows={2} value={referralForm.notes} onChange={e => updateReferralField("notes", e.target.value)} /></div>
+
+                    <div className="gnt-doc-box" style={{ maxHeight: 200 }}>
+                      <h4>Referral Agreement</h4>
+                      <p>By submitting this referral, {myCompany.company_name} ("Broker") confirms it is introducing the above buyer and seller to Tankbridge in good faith, and that the CIPC/DMRE details provided are accurate to the best of Broker's knowledge. If Tankbridge concludes a deal involving this referral, Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete.</p>
+                    </div>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
+                      <input type="checkbox" checked={referralAgree} onChange={e => setReferralAgree(e.target.checked)} style={{ marginTop: 3 }} />
+                      <span>I have read and agree to the Referral Agreement above on behalf of {myCompany.company_name}.</span>
+                    </label>
+                    <div className="gnt-field"><label>Type your full legal name to sign</label><input value={referralName} onChange={e => setReferralName(e.target.value)} /></div>
+                    <button className="gnt-btn gnt-btn-amber" type="submit"><Plus size={15} /> Accept &amp; submit referral</button>
+                  </form>
+
+                  <h3 style={{ fontSize: 20, marginBottom: 10 }}>My referrals</h3>
+                  {myReferrals.length === 0 && <div className="gnt-empty">No referrals submitted yet.</div>}
+                  {myReferrals.map(r => (
+                    <div key={r.id} className="gnt-card" style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                        <div>
+                          <span className={`gnt-badge ${r.status}`}>{r.status}</span>
+                          <div style={{ fontWeight: 600, marginTop: 6 }}>Buyer: {r.buyer_company_name} &nbsp;·&nbsp; Seller: {r.seller_company_name}</div>
+                          <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {r.terms} · {r.location}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div className="gnt-badge pending">{r.commission_status}</div>
+                          {r.commission_amount != null && <div style={{ marginTop: 6, fontWeight: 600 }}>{fmtMoney(r.commission_amount)}</div>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </>
           )}
         </div>
@@ -1019,7 +1226,7 @@ export default function App() {
               <div className="gnt-section-head">
                 <h2>Admin</h2>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {[["pending", `Pending (${pendingCompanies.length})`], ["approved", `Approved (${approvedCompanies.length})`], ["rejected", `Rejected (${rejectedCompanies.length})`], ["deals", `Deals (${adminDeals.length})`], ["listings", `Listings (${adminListings.length})`]].map(([key, label]) => (
+                  {[["pending", `Pending (${pendingCompanies.length})`], ["approved", `Approved (${approvedCompanies.length})`], ["rejected", `Rejected (${rejectedCompanies.length})`], ["deals", `Deals (${adminDeals.length})`], ["listings", `Listings (${adminListings.length})`], ["referrals", `Referrals (${adminReferrals.length})`]].map(([key, label]) => (
                     <button key={key} className={adminTab === key ? "gnt-btn gnt-btn-ink gnt-btn-sm" : "gnt-btn gnt-btn-ghost gnt-btn-sm"} onClick={() => setAdminTab(key)}>{label}</button>
                   ))}
                 </div>
@@ -1046,17 +1253,25 @@ export default function App() {
 
               {adminTab === "deals" && (
                 <table className="gnt-table">
-                  <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Date</th></tr></thead>
+                  <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Platform commission (R)</th><th>Date</th></tr></thead>
                   <tbody>
                     {adminDeals.map(d => (
                       <tr key={d.id}>
                         <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {d.terms} · {d.location}</span></td>
                         <td>{adminCompanies.find(c => c.id === d.seller_company_id)?.company_name}</td>
                         <td>{adminCompanies.find(c => c.id === d.buyer_company_id)?.company_name}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <input type="number" min="0" step="0.01" style={{ width: 100, padding: "6px 8px", border: "1.5px solid var(--line)" }}
+                              value={commissionEdits[d.id] ?? (d.platform_commission_amount ?? "")}
+                              onChange={e => updateCommissionInput(d.id, e.target.value)} />
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveCommission(d.id)}>Save</button>
+                          </div>
+                        </td>
                         <td>{fmtDate(d.created_at)}</td>
                       </tr>
                     ))}
-                    {adminDeals.length === 0 && <tr><td colSpan={4}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
+                    {adminDeals.length === 0 && <tr><td colSpan={5}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
                   </tbody>
                 </table>
               )}
@@ -1072,6 +1287,59 @@ export default function App() {
                       </tr>
                     ))}
                     {adminListings.length === 0 && <tr><td colSpan={6}><div className="gnt-empty">No listings yet.</div></td></tr>}
+                  </tbody>
+                </table>
+              )}
+
+              {adminTab === "referrals" && (
+                <table className="gnt-table">
+                  <thead><tr><th>Broker</th><th>Buyer</th><th>Seller</th><th>Deal / Terms</th><th>Verification</th><th>Linked deal</th><th>Commission</th></tr></thead>
+                  <tbody>
+                    {adminReferrals.map(r => (
+                      <tr key={r.id}>
+                        <td>{adminCompanies.find(c => c.id === r.broker_company_id)?.company_name}</td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{r.buyer_company_name}</div>
+                          <div className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>CIPC {r.buyer_cipc}</div>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{r.seller_company_name}</div>
+                          <div className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>CIPC {r.seller_cipc}<br />DMRE {r.seller_dmre_license}</div>
+                        </td>
+                        <td>{r.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(r.volume).toLocaleString()} ℓ @ {fmtMoney(r.unit_price)} · {r.terms} · {r.location}</span></td>
+                        <td>
+                          <span className={`gnt-badge ${r.status}`}>{r.status}</span>
+                          {r.status === "pending" && (
+                            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
+                              <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setReferralStatus(r, "rejected")}>Reject</button>
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {r.matched_deal_id ? (
+                            <span className="mono" style={{ fontSize: 11.5 }}>{r.matched_deal_id.slice(0, 8)}…</span>
+                          ) : r.status !== "approved" ? (
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Approve referral first</span>
+                          ) : linkDealFor === r.id ? (
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <select value={linkDealChoice} onChange={e => setLinkDealChoice(e.target.value)} style={{ padding: "6px 8px" }}>
+                                <option value="">Select a deal…</option>
+                                {adminDeals.map(d => <option key={d.id} value={d.id}>{d.product} — {Number(d.volume).toLocaleString()}ℓ ({fmtDate(d.created_at)})</option>)}
+                              </select>
+                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => linkReferralToDeal(r.id, linkDealChoice)}>Link</button>
+                            </div>
+                          ) : (
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setLinkDealFor(r.id)}>Link to deal</button>
+                          )}
+                        </td>
+                        <td>
+                          <div className={`gnt-badge ${r.commission_status === "paid" ? "approved" : r.commission_status === "payable" ? "selling" : "pending"}`}>{r.commission_status}</div>
+                          {r.commission_amount != null && <div style={{ marginTop: 4, fontWeight: 600 }}>{fmtMoney(r.commission_amount)}</div>}
+                        </td>
+                      </tr>
+                    ))}
+                    {adminReferrals.length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No referrals submitted yet.</div></td></tr>}
                   </tbody>
                 </table>
               )}
