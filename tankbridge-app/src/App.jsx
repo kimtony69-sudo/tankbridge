@@ -25,6 +25,8 @@ function fmtMoney(n) {
 const EMPTY_REG = {
   companyName: "", cipc: "", dmreLicense: "", address: "", contactName: "", phone: "", email: "",
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: TRADE_TERMS[0],
+  // broker-only: the first referral they submit as part of registering
+  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: "COC", location: "", availability: "", notes: "", procedure: "" };
 const EMPTY_REFERRAL = {
@@ -404,7 +406,16 @@ export default function App() {
       return "Please complete all fields (CIPC number is required).";
     }
     if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
-    if (regType === "broker") return ""; // Brokers don't need their own trade volume/price info
+
+    if (regType === "broker") {
+      if (!regForm.referredCompanyName || !regForm.referredCipc) return "Please enter the referred company's name and CIPC number.";
+      if (regForm.referredType === "seller" && !regForm.referredDmreLicense) return "DMRE wholesale license is required when referring a seller.";
+      if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
+      if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
+      if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
+      return "";
+    }
+
     if (regType === "seller" && !regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
     if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price you want to trade.";
     if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
@@ -459,6 +470,27 @@ export default function App() {
         availability: "Immediate",
         status: "pending",
       });
+    }
+
+    // Brokers submit their first referral (buyer or seller) as part of registration —
+    // it goes to admin for CIPC/DMRE verification, same as any later referral from their Dashboard.
+    if (regType === "broker") {
+      const { error: refError } = await supabase.from("referrals").insert({
+        broker_company_id: data.id,
+        referred_type: regForm.referredType,
+        referred_company_name: regForm.referredCompanyName,
+        referred_cipc: regForm.referredCipc,
+        referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
+        product: regForm.product,
+        volume: Number(regForm.tradeVolume),
+        unit_price: Number(regForm.tradePrice),
+        location: resolvedLocation,
+        terms: regForm.tradeTerms,
+        agreement_accepted: true,
+        agreement_accepted_by: ncndaName,
+        agreement_accepted_at: new Date().toISOString(),
+      });
+      if (refError) console.error("referral insert error", refError);
     }
 
     setMyCompany(data);
@@ -835,7 +867,45 @@ export default function App() {
                 </div>
 
                 {regType === "broker" ? (
-                  <div className="gnt-info-banner"><CheckCircle2 size={16} /> Brokers don't trade directly — once approved, you'll add buyer/seller referrals from your Dashboard.</div>
+                  <>
+                    <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>Who are you introducing?</h3>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>You can add more buyer/seller referrals from your Dashboard later — this is just your first one.</p>
+                    <div className="gnt-type-toggle">
+                      <button type="button" className={regForm.referredType === "seller" ? "active" : ""} onClick={() => updateReg("referredType", "seller")}>Referring a Seller</button>
+                      <button type="button" className={regForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReg("referredType", "buyer")}>Referring a Buyer</button>
+                    </div>
+                    <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={regForm.referredCompanyName} onChange={e => updateReg("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.referredCipc} onChange={e => updateReg("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                      {regForm.referredType === "seller" && (
+                        <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.referredDmreLicense} onChange={e => updateReg("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                      )}
+                    </div>
+                    <div className="gnt-field"><label>Product</label>
+                      <select value={regForm.product} onChange={e => updateReg("product", e.target.value)}>
+                        {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={regForm.tradeVolume} onChange={e => updateReg("tradeVolume", e.target.value)} placeholder="40000" /></div>
+                      <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={regForm.tradePrice} onChange={e => updateReg("tradePrice", e.target.value)} placeholder="21.45" /></div>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Location</label>
+                        <select value={regForm.tradeLocation} onChange={e => updateReg("tradeLocation", e.target.value)}>
+                          {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                        </select>
+                        {regForm.tradeLocation === "Other" && (
+                          <input style={{ marginTop: 8 }} value={regForm.tradeLocationOther} onChange={e => updateReg("tradeLocationOther", e.target.value)} placeholder="Specify location" />
+                        )}
+                      </div>
+                      <div className="gnt-field"><label>Terms</label>
+                        <select value={regForm.tradeTerms} onChange={e => updateReg("tradeTerms", e.target.value)}>
+                          {TRADE_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>{regType === "seller" ? "What are you looking to sell?" : "What are you looking to buy?"}</h3>
@@ -892,13 +962,19 @@ export default function App() {
                 <p>Party agrees to keep confidential all counterparty names, pricing, volumes and terms shared via the platform.</p>
                 <h4>4. Governing law</h4>
                 <p>This Agreement is governed by the laws of the Republic of South Africa.</p>
+                {regType === "broker" && (
+                  <>
+                    <h4>5. Referral commission</h4>
+                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration), Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete. Broker confirms the CIPC/DMRE details submitted for the referred party are accurate to the best of its knowledge.</p>
+                  </>
+                )}
                 <div className="gnt-sig-line">This is a standard template provided for demonstration purposes. Tankbridge recommends independent legal review before commercial use.</div>
               </div>
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={finalizeRegistration}>
                 <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
                   <input type="checkbox" checked={ncndaAgree} onChange={e => setNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span>I have read and agree to the NCNDA above on behalf of the company named in this registration.</span>
+                  <span>I have read and agree to the {regType === "broker" ? "NCNDA and Referral commission terms" : "NCNDA"} above on behalf of the company named in this registration.</span>
                 </label>
                 <div className="gnt-field"><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
                 <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }}>Accept &amp; submit registration <FileSignature size={16} /></button>
