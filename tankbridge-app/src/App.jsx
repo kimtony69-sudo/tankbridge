@@ -307,6 +307,7 @@ export default function App() {
   const [regForm, setRegForm] = useState(EMPTY_REG);
   const [ncndaAgree, setNcndaAgree] = useState(false);
   const [ncndaName, setNcndaName] = useState("");
+  const [ncndaScrolledEnd, setNcndaScrolledEnd] = useState(false);
   const [regError, setRegError] = useState("");
 
   const [listingForm, setListingForm] = useState(EMPTY_LISTING);
@@ -428,7 +429,13 @@ export default function App() {
     const err = validateRegForm();
     if (err) { setRegError(err); return; }
     setRegError("");
+    setNcndaScrolledEnd(false);
     setRegStep(session ? "ncnda" : "login");
+  }
+
+  function handleNcndaScroll(e) {
+    const el = e.target;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) setNcndaScrolledEnd(true);
   }
 
   async function finalizeRegistration(e) {
@@ -459,7 +466,7 @@ export default function App() {
     // Buyers/sellers get their signup volume/price/location auto-published as their first listing
     // (this listing flips to active automatically when admin approves the company)
     if (regType !== "broker") {
-      await supabase.from("listings").insert({
+      const { error: listingError } = await supabase.from("listings").insert({
         company_id: data.id,
         kind: regType === "seller" ? "sell" : "buy",
         product: regForm.product,
@@ -470,6 +477,7 @@ export default function App() {
         availability: "Immediate",
         status: "pending",
       });
+      if (listingError) console.error("initial listing insert error", listingError);
     }
 
     // Brokers submit their first referral (buyer or seller) as part of registration —
@@ -498,7 +506,7 @@ export default function App() {
     showToast("Registration submitted — Tankbridge admin has been notified.");
   }
 
-  function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); goto("register"); }
+  function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); setNcndaAgree(false); setNcndaScrolledEnd(false); goto("register"); }
 
   // ---------- LISTINGS (dashboard) ----------
   function updateListingField(field, value) { setListingForm(f => ({ ...f, [field]: value })); }
@@ -522,6 +530,7 @@ export default function App() {
       availability: listingForm.availability,
       notes: listingForm.notes,
       procedure: listingForm.procedure,
+      status: "active", // this form is only reachable once the company is already approved
     });
     if (error) { setListingError(error.message); return; }
     setListingForm(EMPTY_LISTING);
@@ -951,32 +960,48 @@ export default function App() {
 
           {regStep === "ncnda" && (
             <>
-              <h2 style={{ fontSize: 30, marginBottom: 6 }}>NCNDA — Non-Circumvention, Non-Disclosure Agreement</h2>
-              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>Required for both buyers and sellers before admin approval.</p>
-              <div className="gnt-doc-box">
-                <h4>1. Parties</h4>
-                <p>This Non-Circumvention, Non-Disclosure Agreement ("Agreement") is entered into between <strong>{regForm.companyName || "the registering party"}</strong> ("Party") and Tankbridge, acting as intermediary/broker ("Intermediary"), governing all bulk diesel opportunities introduced via the Tankbridge platform.</p>
-                <h4>2. Non-circumvention</h4>
-                <p>Party agrees not to contact, transact with, or otherwise circumvent any counterparty introduced by Tankbridge, directly or indirectly, without Tankbridge's written consent, for the duration of this Agreement and for 24 months thereafter.</p>
-                <h4>3. Non-disclosure</h4>
-                <p>Party agrees to keep confidential all counterparty names, pricing, volumes and terms shared via the platform.</p>
-                <h4>4. Governing law</h4>
-                <p>This Agreement is governed by the laws of the Republic of South Africa.</p>
+              <h2 style={{ fontSize: 30, marginBottom: 6 }}>NCNDA — Non-Circumvention, Non-Disclosure &amp; Fee Protection Agreement</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>Required for buyers, sellers and brokers before admin approval. Please scroll to the end to enable agreement.</p>
+              <div className="gnt-doc-box" onScroll={handleNcndaScroll} style={{ maxHeight: 320 }}>
+                <h4>1. Parties and Purpose</h4>
+                <p>This Non-Circumvention, Non-Disclosure, and Fee Protection Agreement (the "Agreement") is entered into by and between Tankbridge (acting as the "Intermediary" and trading platform), and the registered platform user, whether acting as a Buyer, Seller, or representative thereof — in this registration, <strong>{regForm.companyName || "the registering party"}</strong> (the "Party").</p>
+                <p>This Agreement governs all bulk diesel opportunities, counterparties, sources of supply, and transaction structures introduced, facilitated, or made visible via the Tankbridge platform.</p>
+
+                <h4>2. Strict Non-Circumvention</h4>
+                <p>The Party explicitly covenants and agrees that it shall not, directly or indirectly, contact, solicit, negotiate with, contract with, or conduct any business with any counterparty, supplier, buyer, refinery, or terminal introduced by Tankbridge, without the express prior written consent of Tankbridge.</p>
+                <p>This restriction applies to: direct transactions, or indirect transactions through affiliates, subsidiaries, agents, nominees, or related third parties; and the entire duration of the Party's registration on the Tankbridge platform, and for a period of twenty-four (24) months following the termination of this Agreement or the deactivation of the Party's account, whichever is later.</p>
+
+                <h4>3. Non-Disclosure &amp; Confidentiality</h4>
+                <p>The Party shall maintain strict confidentiality regarding all proprietary information obtained through the platform. This includes, but is not limited to: counterparty identities, corporate structures, DMRE wholesale licence details, pricing mechanisms, available volumes, logistics arrangements, and financial terms (the "Confidential Information").</p>
+                <p>Confidential Information shall not be disclosed to any third party, nor used for any competitive or commercial purpose outside of transactions directly executed on Tankbridge, without prior written authorization.</p>
+
+                <h4>4. Heavy Penalties for Circumvention &amp; Fee Protection</h4>
+                <p>In the event of any breach of Section 2 (Circumvention) or unauthorized bypass of the Tankbridge platform, the Party acknowledges that Tankbridge will suffer immediate and irreparable financial harm. Therefore, the Party agrees to the following liquidated damages and compensation structure:</p>
+                <p><strong>Forfeiture of Full Commission</strong> — The breaching Party shall be immediately liable to pay Tankbridge the full, unmitigated intermediary fee/commission that would have been due on the unauthorized transaction.</p>
+                <p><strong>Compounded Damaged Volumes</strong> — If the circumvented transaction involves ongoing or recurring supply, the breaching Party shall pay Tankbridge a liquidated damages fee equal to R0.10 per litre of the total volume contracted, delivered, or contemplated under the circumvented relationship for the entire 24-month period, regardless of whether Tankbridge was actively involved in the subsequent transactions.</p>
+                <p><strong>Punitive/Liquidated Damages</strong> — The Party agrees to pay an immediate, non-refundable penalty fee of Five Million Rand (R5,000,000) per established breach as a reasonable pre-estimate of administrative and punitive damages, without prejudice to Tankbridge's right to seek higher actual damages in court.</p>
+                <p><strong>Legal Fees</strong> — The breaching Party shall be liable for all legal costs incurred by Tankbridge in enforcing this Agreement, calculated on an attorney-and-own-client scale, including collection commission and tracing fees.</p>
+
+                <h4>5. Governing Law and Jurisdiction</h4>
+                <p>This Agreement, and any dispute arising out of or in connection with it, shall be governed by, and construed in accordance with, the laws of the Republic of South Africa. Both Parties consent to the non-exclusive jurisdiction of the High Court of South Africa.</p>
+
                 {regType === "broker" && (
                   <>
-                    <h4>5. Referral commission</h4>
+                    <h4>6. Referral commission</h4>
                     <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration), Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete. Broker confirms the CIPC/DMRE details submitted for the referred party are accurate to the best of its knowledge.</p>
                   </>
                 )}
-                <div className="gnt-sig-line">This is a standard template provided for demonstration purposes. Tankbridge recommends independent legal review before commercial use.</div>
+
+                <div className="gnt-sig-line">This document is a highly restrictive and legally binding agreement designed to protect proprietary platform relationships. Tankbridge strongly advises the Party to obtain independent legal counsel before agreeing to these terms. By checking "I have read all of it, and I agree" or registering on the platform, you acknowledge that you have read, understood, and agreed to be bound by the severe financial penalties outlined herein.</div>
               </div>
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={finalizeRegistration}>
-                <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
-                  <input type="checkbox" checked={ncndaAgree} onChange={e => setNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span>I have read and agree to the {regType === "broker" ? "NCNDA and Referral commission terms" : "NCNDA"} above on behalf of the company named in this registration.</span>
+                <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 6, cursor: ncndaScrolledEnd ? "pointer" : "not-allowed", opacity: ncndaScrolledEnd ? 1 : 0.5 }}>
+                  <input type="checkbox" checked={ncndaAgree} disabled={!ncndaScrolledEnd} onChange={e => setNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span>I have read all of it, and I agree to the {regType === "broker" ? "NCNDA and Referral commission terms" : "NCNDA"} above on behalf of the company named in this registration.</span>
                 </label>
-                <div className="gnt-field"><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
+                {!ncndaScrolledEnd && <div className="hint" style={{ marginBottom: 16 }}>Scroll the document above to the end to enable this checkbox.</div>}
+                <div className="gnt-field" style={{ marginTop: 16 }}><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
                 <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }}>Accept &amp; submit registration <FileSignature size={16} /></button>
               </form>
             </>
