@@ -1019,9 +1019,14 @@ export default function App() {
   async function setCompanyStatus(c, status) {
     const { error } = await supabase.rpc("approve_company", { p_company_id: c.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
+    fetch("/api/notify-company-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companyId: c.id, status }),
+    }).catch(() => {}); // best-effort — don't block the UI if the email fails
     setDetailCompany(null);
     await loadAdminData();
-    showToast(`${c.company_name} was ${status === "approved" ? "approved" : "rejected"}.`);
+    showToast(`${c.company_name} was ${status === "approved" ? "approved" : "rejected"} — they've been notified by email.`);
   }
 
   function updateCommissionInput(dealId, value) { setCommissionEdits(f => ({ ...f, [dealId]: value })); }
