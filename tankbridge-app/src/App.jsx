@@ -1487,27 +1487,37 @@ export default function App() {
                         </div>
                       </form>
                     ) : (
-                      <div key={l.id} className="gnt-listing" style={{ marginBottom: 10 }}>
-                        <div className="gnt-listing-top">
-                          <div>
-                            <div className="gnt-listing-product">
-                              {l.product}
-                              {l.status === "inactive" && <span className="gnt-badge approved" style={{ marginLeft: 8, verticalAlign: "middle" }}>Sold</span>}
+                      (() => {
+                        const relatedDeal = myDeals.find(d => d.listing_id === l.id);
+                        const isFellThrough = l.status === "inactive" && relatedDeal?.status === "cancelled";
+                        const isSold = l.status === "inactive" && !isFellThrough;
+                        return (
+                          <div key={l.id} className="gnt-listing" style={{ marginBottom: 10 }}>
+                            <div className="gnt-listing-top">
+                              <div>
+                                <div className="gnt-listing-product">
+                                  {l.product}
+                                  {isSold && <span className="gnt-badge approved" style={{ marginLeft: 8, verticalAlign: "middle" }}>Sold</span>}
+                                  {isFellThrough && <span className="gnt-badge rejected" style={{ marginLeft: 8, verticalAlign: "middle" }}>Fell through</span>}
+                                </div>
+                                <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{l.volume.toLocaleString()} ℓ · {fmtTerms(l.terms)}</div>
+                              </div>
+                              <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>per litre</small></div>
                             </div>
-                            <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{l.volume.toLocaleString()} ℓ · {fmtTerms(l.terms)}</div>
+                            <div className="gnt-listing-meta"><span><MapPin size={13} /> {l.location}</span><span><Clock size={13} /> {l.availability}</span></div>
+                            {isSold ? (
+                              <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>Admin marked a deal on this listing as completed, so it's no longer available on the Market Board — see it under My matched deals below.</p>
+                            ) : isFellThrough ? (
+                              <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>This deal fell through and was confirmed by admin, so the listing is no longer available on the Market Board.</p>
+                            ) : (
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
+                                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
+                              </div>
+                            )}
                           </div>
-                          <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>per litre</small></div>
-                        </div>
-                        <div className="gnt-listing-meta"><span><MapPin size={13} /> {l.location}</span><span><Clock size={13} /> {l.availability}</span></div>
-                        {l.status === "inactive" ? (
-                          <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>Admin marked a deal on this listing as completed, so it's no longer available on the Market Board — see it under My matched deals below.</p>
-                        ) : (
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
-                            <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
-                          </div>
-                        )}
-                      </div>
+                        );
+                      })()
                     )
                   ))}
 
