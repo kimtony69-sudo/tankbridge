@@ -533,7 +533,11 @@ export default function App() {
   function updateReg(field, value) { setRegForm(f => ({ ...f, [field]: value })); }
 
   function validateRegForm() {
-    if (!regForm.companyName || !regForm.cipc || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email) {
+    if (regType === "broker") {
+      if (!regForm.companyName || !regForm.contactName || !regForm.phone || !regForm.email) {
+        return "Please complete company name, contact person, phone and email.";
+      }
+    } else if (!regForm.companyName || !regForm.cipc || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email) {
       return "Please complete all fields (CIPC number is required).";
     }
     if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
@@ -603,9 +607,9 @@ export default function App() {
       user_id: session.user.id,
       type: regType,
       company_name: regForm.companyName,
-      cipc: regForm.cipc,
+      cipc: regForm.cipc || null,
       dmre_license: regType === "seller" ? regForm.dmreLicense : null,
-      address: regForm.address,
+      address: regForm.address || null,
       contact_name: regForm.contactName,
       phone: regForm.phone,
       email: regForm.email,
@@ -821,10 +825,15 @@ export default function App() {
       const { data } = await supabase.rpc("get_deal_buyer_contact", { p_deal_id: deal.id });
       reveal = { gated: !data || data.length === 0, info: (data && data[0]) || null };
     }
+    fetch("/api/notify-accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId: deal.id }),
+    }).catch(() => {}); // best-effort — don't block the UI if the email fails
     setRevealedInfo(reveal);
     setAcceptTarget(null);
     await loadMyDeals();
-    showToast("Deal recorded — Tankbridge admin has been notified.");
+    showToast("Deal recorded — the other party and Tankbridge admin have been notified by email.");
   }
 
   // ---------- ADMIN ----------
@@ -1129,12 +1138,12 @@ export default function App() {
               <form onSubmit={submitRegForm}>
                 <div className="gnt-field"><label>{regType === "broker" ? "Agency / company name" : "Company name"}</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
                 <div className="gnt-grid2">
-                  <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                  <div className="gnt-field"><label>CIPC registration number{regType === "broker" ? " (optional)" : ""}</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
                   {regType === "seller" && (
                     <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
                   )}
                 </div>
-                <div className="gnt-field"><label>Company address</label><textarea rows={2} value={regForm.address} onChange={e => updateReg("address", e.target.value)} placeholder="Street, suburb, city, province" /></div>
+                <div className="gnt-field"><label>Company address{regType === "broker" ? " (optional)" : ""}</label><textarea rows={2} value={regForm.address} onChange={e => updateReg("address", e.target.value)} placeholder="Street, suburb, city, province" /></div>
                 <div className="gnt-grid2">
                   <div className="gnt-field"><label>Contact person</label><input value={regForm.contactName} onChange={e => updateReg("contactName", e.target.value)} /></div>
                   <div className="gnt-field"><label>Phone</label><input value={regForm.phone} onChange={e => updateReg("phone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
