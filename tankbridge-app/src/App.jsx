@@ -302,8 +302,16 @@ function DealCard({ deal, myCompany, onReported }) {
     setLoading(true);
     if (isSellerViewing) {
       const { data } = await supabase.rpc("get_deal_buyer_contact", { p_deal_id: deal.id });
-      setGated(!data || data.length === 0);
-      setInfo((data && data[0]) || null);
+      const success = data && data.length > 0;
+      setGated(!success);
+      setInfo(success ? data[0] : null);
+      if (success) {
+        fetch("/api/notify-buyer-info-request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dealId: deal.id }),
+        }).catch(() => {}); // best-effort — sends once per deal, guarded server-side
+      }
     } else {
       const { data } = await supabase.rpc("get_deal_seller_contact", { p_deal_id: deal.id });
       setGated(false);
@@ -350,7 +358,7 @@ function DealCard({ deal, myCompany, onReported }) {
       ) : gated ? (
         <div className="gnt-alert-banner"><Lock size={16} /> Buyer identity hidden until you sign the IMFPA above.</div>
       ) : info ? (
-        <div className="gnt-info-banner"><CheckCircle2 size={16} /> {info.company_name} — {info.contact_name}, {info.phone}, {info.email}</div>
+        <div className="gnt-info-banner"><CheckCircle2 size={16} /> {info.company_name} (CIPC {info.cipc || "—"}) — {info.contact_name}, {info.phone}, {info.email}</div>
       ) : (
         <div className="gnt-alert-banner"><AlertTriangle size={16} /> Could not load contact details.</div>
       )}
@@ -2074,6 +2082,7 @@ export default function App() {
                   <div><div className="dt">Contact</div><div className="dd">{revealedInfo.info.contact_name}</div></div>
                   <div><div className="dt">Phone</div><div className="dd">{revealedInfo.info.phone}</div></div>
                   <div><div className="dt">Email</div><div className="dd">{revealedInfo.info.email}</div></div>
+                  <div><div className="dt">CIPC No.</div><div className="dd">{revealedInfo.info.cipc || "—"}</div></div>
                 </div>
                 <div className="gnt-info-banner" style={{ marginTop: 14 }}><CheckCircle2 size={16} /> Tankbridge admin has been notified of this deal.</div>
                 <button className="gnt-btn gnt-btn-ghost" onClick={() => setRevealedInfo(null)}>Close</button>
