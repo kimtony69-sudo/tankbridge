@@ -10,6 +10,18 @@ import { supabase } from "./supabaseClient";
 const PRODUCTS = ["Diesel 50ppm", "Diesel 10ppm (ULSD)", "Illuminating Paraffin", "Petrol ULP93", "Petrol ULP95"];
 const LOCATIONS = ["Durban", "Lesedi", "Secunda", "Sasolburg", "Johannesburg", "Cape Town", "Richards Bay", "Other"];
 const TRADE_TERMS = ["COC", "COD", "ITT", "TTO"];
+const BUYER_FELL_THROUGH_REASONS = [
+  "Could not verify Proof of Product",
+  "Seller changed the price unilaterally",
+  "No product available",
+  "Other",
+];
+const SELLER_FELL_THROUGH_REASONS = [
+  "Issue with Proof of Funds",
+  "Did not receive ICPO",
+  "Did not receive uplift / loading schedule",
+  "Other",
+];
 
 function fmtDate(ts) {
   if (!ts) return "-";
@@ -276,10 +288,15 @@ function DealCard({ deal, myCompany, onReported }) {
   const [loading, setLoading] = useState(false);
   const [checked, setChecked] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [showReasonPicker, setShowReasonPicker] = useState(false);
+  const [selectedReason, setSelectedReason] = useState("");
+  const [otherReasonText, setOtherReasonText] = useState("");
 
   const isSellerViewing = myCompany.id === deal.seller_company_id;
   const myReportedStatus = isSellerViewing ? deal.seller_reported_status : deal.buyer_reported_status;
   const otherReportedStatus = isSellerViewing ? deal.buyer_reported_status : deal.seller_reported_status;
+  const myFellThroughReason = isSellerViewing ? deal.seller_fell_through_reason : deal.buyer_fell_through_reason;
+  const reasonOptions = isSellerViewing ? SELLER_FELL_THROUGH_REASONS : BUYER_FELL_THROUGH_REASONS;
 
   async function reveal() {
     setLoading(true);
@@ -296,18 +313,25 @@ function DealCard({ deal, myCompany, onReported }) {
     setLoading(false);
   }
 
-  async function report(outcome) {
+  async function report(outcome, reason) {
     setReporting(true);
-    const { error } = await supabase.rpc("report_deal_outcome", { p_deal_id: deal.id, p_outcome: outcome });
+    const { error } = await supabase.rpc("report_deal_outcome", { p_deal_id: deal.id, p_outcome: outcome, p_reason: reason || null });
     setReporting(false);
     if (!error) {
       fetch("/api/notify-deal-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId: deal.id, role: isSellerViewing ? "seller" : "buyer", outcome }),
+        body: JSON.stringify({ dealId: deal.id, role: isSellerViewing ? "seller" : "buyer", outcome, reason }),
       }).catch(() => {}); // best-effort — don't block the UI if the email fails
+      setShowReasonPicker(false);
       if (onReported) onReported();
     }
+  }
+
+  function submitFellThrough() {
+    const reason = selectedReason === "Other" ? (otherReasonText.trim() || "Other") : selectedReason;
+    if (!selectedReason) return;
+    report("fell_through", reason);
   }
 
   return (
@@ -335,15 +359,34 @@ function DealCard({ deal, myCompany, onReported }) {
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
           {myReportedStatus ? (
             <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>
-              You reported this deal as <strong>{myReportedStatus === "completed" ? "completed" : "fell through"}</strong>.
+              You reported this deal as <strong>{myReportedStatus === "completed" ? "completed" : "fell through"}</strong>{myFellThroughReason ? ` (${myFellThroughReason})` : ""}.
               {otherReportedStatus ? " The other party has also reported an outcome — admin has been notified." : " Waiting on the other party / admin to confirm."}
             </p>
+          ) : showReasonPicker ? (
+            <>
+              <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>What went wrong?</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {reasonOptions.map(r => (
+                  <label key={r} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                    <input type="radio" name={`reason-${deal.id}`} checked={selectedReason === r} onChange={() => setSelectedReason(r)} />
+                    {r}
+                  </label>
+                ))}
+              </div>
+              {selectedReason === "Other" && (
+                <input style={{ marginBottom: 10 }} value={otherReasonText} onChange={e => setOtherReasonText(e.target.value)} placeholder="Briefly describe what happened" />
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={!selectedReason || reporting} onClick={submitFellThrough}>Submit</button>
+                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShowReasonPicker(false)}>Cancel</button>
+              </div>
+            </>
           ) : (
             <>
               <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>Let Tankbridge know how this deal turned out — admin can't tell otherwise.</p>
               <div style={{ display: "flex", gap: 8 }}>
                 <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={reporting} onClick={() => report("completed")}>Report: Deal completed</button>
-                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={reporting} onClick={() => report("fell_through")}>Report: Deal fell through</button>
+                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={reporting} onClick={() => setShowReasonPicker(true)}>Report: Deal fell through</button>
               </div>
             </>
           )}
@@ -867,6 +910,14 @@ export default function App() {
       : newStatus === "cancelled" ? "Deal cancelled — listing stays live for other buyers."
       : "Deal reverted to matched."
     );
+  }
+
+  async function confirmFellThrough(dealId) {
+    const { error } = await supabase.rpc("confirm_fell_through", { p_deal_id: dealId });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    await loadMarketBoard();
+    showToast("Confirmed — removed from the Market Board and from both dashboards.");
   }
 
   async function addBlacklistEntry(e) {
@@ -1463,8 +1514,8 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  {myDeals.length === 0 && <div className="gnt-empty">No matched deals yet.</div>}
-                  {myDeals.map(d => (
+                  {myDeals.filter(d => d.status !== "cancelled").length === 0 && <div className="gnt-empty">No matched deals yet.</div>}
+                  {myDeals.filter(d => d.status !== "cancelled").map(d => (
                     <DealCard key={d.id} deal={d} myCompany={myCompany} onReported={loadMyDeals} />
                   ))}
 
@@ -1735,7 +1786,12 @@ export default function App() {
                         </td>
                         <td style={{ fontSize: 12 }}>
                           <div>Seller: {d.seller_reported_status ? <strong>{d.seller_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
-                          <div>Buyer: {d.buyer_reported_status ? <strong>{d.buyer_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
+                          {d.seller_fell_through_reason && <div style={{ color: "var(--steel-soft)", fontSize: 11 }}>Reason: {d.seller_fell_through_reason}</div>}
+                          <div style={{ marginTop: 4 }}>Buyer: {d.buyer_reported_status ? <strong>{d.buyer_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
+                          {d.buyer_fell_through_reason && <div style={{ color: "var(--steel-soft)", fontSize: 11 }}>Reason: {d.buyer_fell_through_reason}</div>}
+                          {d.status === "matched" && (d.seller_reported_status === "fell_through" || d.buyer_reported_status === "fell_through") && (
+                            <button className="gnt-btn gnt-btn-danger gnt-btn-sm" style={{ marginTop: 8 }} onClick={() => confirmFellThrough(d.id)}>Confirm — remove listing</button>
+                          )}
                         </td>
                         <td>
                           <div style={{ display: "flex", gap: 6 }}>
