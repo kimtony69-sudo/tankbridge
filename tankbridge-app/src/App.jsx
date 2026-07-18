@@ -525,6 +525,12 @@ export default function App() {
     setBoardListings(data || []);
   }, []);
   useEffect(() => { loadMarketBoard(); }, [loadMarketBoard]);
+  // Also refresh every time the person actually lands on Home or Market Board,
+  // so a listing removed elsewhere (e.g. admin confirming a fell-through deal)
+  // never lingers on screen from a stale earlier fetch.
+  useEffect(() => {
+    if (view === "landing" || view === "market") loadMarketBoard();
+  }, [view, loadMarketBoard]);
 
   // ---------- PUBLIC BLACKLIST (visible to everyone, even logged out) ----------
   const loadPublicBlacklist = useCallback(async () => {
