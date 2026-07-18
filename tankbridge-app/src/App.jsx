@@ -1137,13 +1137,17 @@ export default function App() {
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={submitRegForm}>
                 <div className="gnt-field"><label>{regType === "broker" ? "Agency / company name" : "Company name"}</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
-                <div className="gnt-grid2">
-                  <div className="gnt-field"><label>CIPC registration number{regType === "broker" ? " (optional)" : ""}</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                  {regType === "seller" && (
-                    <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
-                  )}
-                </div>
-                <div className="gnt-field"><label>Company address{regType === "broker" ? " (optional)" : ""}</label><textarea rows={2} value={regForm.address} onChange={e => updateReg("address", e.target.value)} placeholder="Street, suburb, city, province" /></div>
+                {regType !== "broker" && (
+                  <div className="gnt-grid2">
+                    <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                    {regType === "seller" && (
+                      <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                    )}
+                  </div>
+                )}
+                {regType !== "broker" && (
+                  <div className="gnt-field"><label>Company address</label><textarea rows={2} value={regForm.address} onChange={e => updateReg("address", e.target.value)} placeholder="Street, suburb, city, province" /></div>
+                )}
                 <div className="gnt-grid2">
                   <div className="gnt-field"><label>Contact person</label><input value={regForm.contactName} onChange={e => updateReg("contactName", e.target.value)} /></div>
                   <div className="gnt-field"><label>Phone</label><input value={regForm.phone} onChange={e => updateReg("phone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
