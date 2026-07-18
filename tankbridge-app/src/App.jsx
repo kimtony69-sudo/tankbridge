@@ -43,7 +43,7 @@ const EMPTY_REG = {
   password: "", confirmPassword: "",
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
   // broker-only: the first referral they submit as part of registering
-  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
+  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "",
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedure: "" };
 const EMPTY_REFERRAL = {
@@ -416,7 +416,22 @@ export default function App() {
     return null;
   })();
 
-  const [view, setView] = useState(checkinParams ? "checkin" : "landing");
+  const inviteToken = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get("invite") || null;
+    } catch { return null; }
+  })();
+
+  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : "landing");
+  const [inviteReferral, setInviteReferral] = useState(null);
+  const [inviteLoading, setInviteLoading] = useState(true);
+  const [inviteStep, setInviteStep] = useState("intro"); // intro -> account -> confirm-email -> ncnda -> done
+  const [inviteForm, setInviteForm] = useState({ password: "", confirmPassword: "", contactName: "", phone: "", email: "" });
+  const [inviteError, setInviteError] = useState("");
+  const [inviteNcndaAgree, setInviteNcndaAgree] = useState(false);
+  const [inviteNcndaName, setInviteNcndaName] = useState("");
+  const [inviteNcndaScrolledEnd, setInviteNcndaScrolledEnd] = useState(false);
   const [checkinResult, setCheckinResult] = useState(null);
   const [checkinChoice, setCheckinChoice] = useState(checkinParams?.outcome || "");
   const [checkinSubmitting, setCheckinSubmitting] = useState(false);
@@ -513,6 +528,71 @@ export default function App() {
   }, [session]);
 
   async function signOut() { await supabase.auth.signOut(); goto("landing"); }
+
+  // ---------- BROKER-INVITED REGISTRATION ----------
+  useEffect(() => {
+    if (!inviteToken) { setInviteLoading(false); return; }
+    (async () => {
+      const { data, error } = await supabase.rpc("get_referral_by_token", { p_token: inviteToken });
+      if (error || !data || data.length === 0) { setInviteError("This invite link is invalid or has expired."); setInviteLoading(false); return; }
+      const referral = data[0];
+      setInviteReferral(referral);
+      setInviteForm(f => ({ ...f, email: referral.referred_email || "" }));
+      if (referral.invite_status === "accepted") { setInviteStep("done"); }
+      setInviteLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteToken]);
+
+  useEffect(() => {
+    if (view === "invite" && session && (inviteStep === "account" || inviteStep === "confirm-email")) {
+      setInviteStep("ncnda");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  function updateInviteField(field, value) { setInviteForm(f => ({ ...f, [field]: value })); }
+
+  async function submitInviteAccount(e) {
+    e.preventDefault();
+    if (!inviteForm.contactName || !inviteForm.phone || !inviteForm.email) { setInviteError("Please complete contact person, phone and email."); return; }
+    if (!/^\S+@\S+\.\S+$/.test(inviteForm.email)) { setInviteError("Please enter a valid email address."); return; }
+    if (!session) {
+      if (!inviteForm.password || inviteForm.password.length < 6) { setInviteError("Please choose a password of at least 6 characters."); return; }
+      if (inviteForm.password !== inviteForm.confirmPassword) { setInviteError("Passwords do not match."); return; }
+    }
+    setInviteError("");
+
+    if (session) { setInviteStep("ncnda"); return; }
+
+    const { data, error } = await supabase.auth.signUp({ email: inviteForm.email, password: inviteForm.password });
+    if (error) { setInviteError(error.message); return; }
+    setInviteStep(data.session ? "ncnda" : "confirm-email");
+  }
+
+  function handleInviteNcndaScroll(e) {
+    const el = e.target;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) setInviteNcndaScrolledEnd(true);
+  }
+
+  async function submitInviteRegistration(e) {
+    e.preventDefault();
+    if (!inviteNcndaAgree || inviteNcndaName.trim().length < 3) { setInviteError("Please accept the NCNDA and enter your full name."); return; }
+    if (!session) { setInviteError("Please confirm your email and log in first."); return; }
+    setInviteError("");
+    const { error } = await supabase.rpc("complete_referral_registration", {
+      p_token: inviteToken,
+      p_contact_name: inviteForm.contactName,
+      p_phone: inviteForm.phone,
+      p_email: inviteForm.email,
+      p_ncnda_signed_by: inviteNcndaName,
+    });
+    if (error) { setInviteError(error.message); return; }
+    const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
+    setMyCompany(co);
+    setInviteStep("done");
+    showToast("Registration complete — you're live on the Market Board.");
+  }
 
   async function submitCheckin(outcome) {
     if (!checkinParams) return;
@@ -614,6 +694,7 @@ export default function App() {
 
     if (regType === "broker") {
       if (!regForm.referredCompanyName || !regForm.referredCipc) return "Please enter the referred company's name and CIPC number.";
+      if (!regForm.referredEmail || !/^\S+@\S+\.\S+$/.test(regForm.referredEmail)) return "A valid email for the referred company is required — Tankbridge will invite them to register directly.";
       if (regForm.referredType === "seller" && !regForm.referredDmreLicense) return "DMRE wholesale license is required when referring a seller.";
       if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
       if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
@@ -714,6 +795,7 @@ export default function App() {
         referred_company_name: regForm.referredCompanyName,
         referred_cipc: regForm.referredCipc,
         referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
+        referred_email: regForm.referredEmail,
         product: regForm.product,
         volume: Number(regForm.tradeVolume),
         unit_price: Number(regForm.tradePrice),
@@ -864,6 +946,9 @@ export default function App() {
     if (!f.referredCompanyName || !f.referredCipc || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
       setReferralError("Please complete all required fields."); return;
     }
+    if (!f.referredEmail || !/^\S+@\S+\.\S+$/.test(f.referredEmail)) {
+      setReferralError("A valid email for the referred company is required — Tankbridge will invite them to register directly."); return;
+    }
     if (f.referredType === "seller" && !f.referredDmreLicense) {
       setReferralError("DMRE wholesale license is required when referring a seller."); return;
     }
@@ -1002,10 +1087,30 @@ export default function App() {
   async function setReferralStatus(referral, status) {
     const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
+    if (status === "approved") {
+      const res = await fetch("/api/send-referral-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ referralId: referral.id }),
+      }).catch(() => null);
+      const ok = res && res.ok;
+      showToast(ok
+        ? `Verified — invite email sent to ${referral.referred_company_name}.`
+        : `Verified, but the invite email failed to send. Use "Resend invite" below.`, ok ? "ok" : "err");
+    } else {
+      showToast("Referral rejected.");
+    }
     await loadAdminData();
-    showToast(status === "approved"
-      ? `Verified — ${referral.referred_company_name}'s listing is now live on the Market Board.`
-      : `Referral rejected.`);
+  }
+
+  async function resendReferralInvite(referral) {
+    const res = await fetch("/api/send-referral-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ referralId: referral.id }),
+    }).catch(() => null);
+    if (res && res.ok) { showToast("Invite email resent."); await loadAdminData(); }
+    else { showToast("Failed to send invite email.", "err"); }
   }
 
   const pendingCompanies = adminCompanies.filter(c => c.status === "pending");
@@ -1053,6 +1158,112 @@ export default function App() {
       {toast && (
         <div style={{ position: "fixed", top: 76, right: 20, zIndex: 200, background: toast.kind === "err" ? "#a63b32" : "#101b28", color: "#ece8de", padding: "12px 18px", fontSize: 13.5, maxWidth: 320, boxShadow: "0 6px 18px rgba(0,0,0,0.25)" }}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* ===================== BROKER-INVITED REGISTRATION (public) ===================== */}
+      {view === "invite" && (
+        <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 640, margin: "0 auto" }}>
+          {inviteLoading ? (
+            <p style={{ color: "var(--steel-soft)" }}>Loading invite…</p>
+          ) : inviteError && !inviteReferral ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Invite not found</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>{inviteError}</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : inviteStep === "done" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 26, marginBottom: 8 }}>You're registered</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>{inviteReferral?.referred_company_name} is now live on the Tankbridge Market Board.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("dashboard")}>Go to my Dashboard</button>
+            </div>
+          ) : inviteStep === "intro" ? (
+            <>
+              <h2 style={{ fontSize: 28, marginBottom: 10 }}>You've been introduced to Tankbridge</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 20 }}><strong>{inviteReferral.broker_company_name}</strong> has introduced <strong>{inviteReferral.referred_company_name}</strong> to Tankbridge as a {inviteReferral.referred_type}. Admin has already reviewed these details. Complete your own registration below to go live.</p>
+              <div className="gnt-card" style={{ marginBottom: 20 }}>
+                <div className="gnt-detail-grid" style={{ marginTop: 0 }}>
+                  <div><div className="dt">Company</div><div className="dd">{inviteReferral.referred_company_name}</div></div>
+                  <div><div className="dt">CIPC No.</div><div className="dd">{inviteReferral.referred_cipc}</div></div>
+                  {inviteReferral.referred_dmre_license && <div><div className="dt">DMRE License</div><div className="dd">{inviteReferral.referred_dmre_license}</div></div>}
+                  <div><div className="dt">{inviteReferral.referred_type === "seller" ? "Selling" : "Buying"}</div><div className="dd">{Number(inviteReferral.volume).toLocaleString()} ℓ @ {fmtMoney(inviteReferral.unit_price)}/ℓ</div></div>
+                  <div><div className="dt">Location / Terms</div><div className="dd">{inviteReferral.location} · {fmtTerms(inviteReferral.terms)}</div></div>
+                </div>
+                <p className="hint" style={{ marginTop: 10 }}>These details were verified by Tankbridge admin and can't be changed here — contact admin if anything needs correcting.</p>
+              </div>
+              <button className="gnt-btn gnt-btn-amber" onClick={() => setInviteStep("account")}>Continue to registration <ChevronRight size={16} /></button>
+            </>
+          ) : inviteStep === "account" ? (
+            <>
+              <h2 style={{ fontSize: 26, marginBottom: 10 }}>Create your account</h2>
+              {inviteError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {inviteError}</div>}
+              <form onSubmit={submitInviteAccount}>
+                <div className="gnt-grid2">
+                  <div className="gnt-field"><label>Contact person</label><input value={inviteForm.contactName} onChange={e => updateInviteField("contactName", e.target.value)} /></div>
+                  <div className="gnt-field"><label>Phone</label><input value={inviteForm.phone} onChange={e => updateInviteField("phone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
+                </div>
+                <div className="gnt-field"><label>Email</label><input type="email" value={inviteForm.email} onChange={e => updateInviteField("email", e.target.value)} />
+                  <div className="hint">This is also your login email.</div>
+                </div>
+                {!session && (
+                  <div className="gnt-grid2">
+                    <div className="gnt-field"><label>Choose a password</label><input type="password" value={inviteForm.password} onChange={e => updateInviteField("password", e.target.value)} placeholder="At least 6 characters" /></div>
+                    <div className="gnt-field"><label>Confirm password</label><input type="password" value={inviteForm.confirmPassword} onChange={e => updateInviteField("confirmPassword", e.target.value)} placeholder="Re-enter password" /></div>
+                  </div>
+                )}
+                <button className="gnt-btn gnt-btn-ink" type="submit" style={{ width: "100%", justifyContent: "center" }}>Continue <ChevronRight size={16} /></button>
+              </form>
+            </>
+          ) : inviteStep === "confirm-email" ? (
+            <>
+              <h2 style={{ fontSize: 26, marginBottom: 10 }}>Confirm your email</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>We've sent a confirmation link to <strong>{inviteForm.email}</strong>. Click it, then log in below with the password you just chose to continue.</p>
+              <LoginGate hideRegisterLink />
+            </>
+          ) : inviteStep === "ncnda" ? (
+            <>
+              <h2 style={{ fontSize: 30, marginBottom: 6 }}>NCNDA — Non-Circumvention, Non-Disclosure &amp; Fee Protection Agreement</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>Required before you go live. Please scroll to the end to enable agreement.</p>
+              <div className="gnt-doc-box" onScroll={handleInviteNcndaScroll} style={{ maxHeight: 320 }}>
+                <h4>1. Parties and Purpose</h4>
+                <p>This Non-Circumvention, Non-Disclosure, and Fee Protection Agreement (the "Agreement") is entered into by and between Tankbridge (acting as the "Intermediary" and trading platform), and the registered platform user — in this registration, <strong>{inviteReferral.referred_company_name}</strong> (the "Party").</p>
+                <p>This Agreement governs all bulk diesel opportunities, counterparties, sources of supply, and transaction structures introduced, facilitated, or made visible via the Tankbridge platform.</p>
+
+                <h4>2. Strict Non-Circumvention</h4>
+                <p>The Party explicitly covenants and agrees that it shall not, directly or indirectly, contact, solicit, negotiate with, contract with, or conduct any business with any counterparty, supplier, buyer, refinery, or terminal introduced by Tankbridge, without the express prior written consent of Tankbridge.</p>
+                <p>This restriction applies to: direct transactions, or indirect transactions through affiliates, subsidiaries, agents, nominees, or related third parties; and the entire duration of the Party's registration on the Tankbridge platform, and for a period of twenty-four (24) months following the termination of this Agreement or the deactivation of the Party's account, whichever is later.</p>
+
+                <h4>3. Non-Disclosure &amp; Confidentiality</h4>
+                <p>The Party shall maintain strict confidentiality regarding all proprietary information obtained through the platform. This includes, but is not limited to: counterparty identities, corporate structures, DMRE wholesale licence details, pricing mechanisms, available volumes, logistics arrangements, and financial terms (the "Confidential Information").</p>
+                <p>Confidential Information shall not be disclosed to any third party, nor used for any competitive or commercial purpose outside of transactions directly executed on Tankbridge, without prior written authorization.</p>
+
+                <h4>4. Heavy Penalties for Circumvention &amp; Fee Protection</h4>
+                <p>In the event of any breach of Section 2 (Circumvention) or unauthorized bypass of the Tankbridge platform, the Party acknowledges that Tankbridge will suffer immediate and irreparable financial harm. Therefore, the Party agrees to the following liquidated damages and compensation structure:</p>
+                <p><strong>Forfeiture of Full Commission</strong> — The breaching Party shall be immediately liable to pay Tankbridge the full, unmitigated intermediary fee/commission that would have been due on the unauthorized transaction.</p>
+                <p><strong>Compounded Damaged Volumes</strong> — If the circumvented transaction involves ongoing or recurring supply, the breaching Party shall pay Tankbridge a liquidated damages fee equal to R0.10 per litre of the total volume contracted, delivered, or contemplated under the circumvented relationship for the entire 24-month period, regardless of whether Tankbridge was actively involved in the subsequent transactions.</p>
+                <p><strong>Punitive/Liquidated Damages</strong> — The Party agrees to pay an immediate, non-refundable penalty fee of Five Million Rand (R5,000,000) per established breach as a reasonable pre-estimate of administrative and punitive damages, without prejudice to Tankbridge's right to seek higher actual damages in court.</p>
+                <p><strong>Legal Fees</strong> — The breaching Party shall be liable for all legal costs incurred by Tankbridge in enforcing this Agreement, calculated on an attorney-and-own-client scale, including collection commission and tracing fees.</p>
+
+                <h4>5. Governing Law and Jurisdiction</h4>
+                <p>This Agreement, and any dispute arising out of or in connection with it, shall be governed by, and construed in accordance with, the laws of the Republic of South Africa. Both Parties consent to the non-exclusive jurisdiction of the High Court of South Africa.</p>
+
+                <div className="gnt-sig-line">This document is a highly restrictive and legally binding agreement designed to protect proprietary platform relationships. Tankbridge strongly advises the Party to obtain independent legal counsel before agreeing to these terms. By checking "I have read all of it, and I agree" or registering on the platform, you acknowledge that you have read, understood, and agreed to be bound by the severe financial penalties outlined herein.</div>
+              </div>
+              {inviteError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {inviteError}</div>}
+              <form onSubmit={submitInviteRegistration}>
+                <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 6, cursor: inviteNcndaScrolledEnd ? "pointer" : "not-allowed", opacity: inviteNcndaScrolledEnd ? 1 : 0.5 }}>
+                  <input type="checkbox" checked={inviteNcndaAgree} disabled={!inviteNcndaScrolledEnd} onChange={e => setInviteNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span>I have read all of it, and I agree to the NCNDA above on behalf of {inviteReferral.referred_company_name}.</span>
+                </label>
+                {!inviteNcndaScrolledEnd && <div className="hint" style={{ marginBottom: 16 }}>Scroll the document above to the end to enable this checkbox.</div>}
+                <div className="gnt-field" style={{ marginTop: 16 }}><label>Type your full legal name to sign</label><input value={inviteNcndaName} onChange={e => setInviteNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
+                <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }}>Accept &amp; go live on the Market Board <FileSignature size={16} /></button>
+              </form>
+            </>
+          ) : null}
         </div>
       )}
 
@@ -1279,6 +1490,7 @@ export default function App() {
                         <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.referredDmreLicense} onChange={e => updateReg("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
                       )}
                     </div>
+                    <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={regForm.referredEmail} onChange={e => updateReg("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
                     <div className="gnt-field"><label>Product</label>
                       <select value={regForm.product} onChange={e => updateReg("product", e.target.value)}>
                         {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
@@ -1676,12 +1888,12 @@ export default function App() {
                         <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={referralForm.referredDmreLicense} onChange={e => updateReferralField("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
                       )}
                     </div>
-                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Optional but recommended — lets Tankbridge (and, once matched, the counterparty) reach this company directly instead of only through you.</p>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Once admin approves, Tankbridge emails this company an invite to register their own account — they set their own password and go live once they complete it.</p>
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Contact person (optional)</label><input value={referralForm.referredContactName} onChange={e => updateReferralField("referredContactName", e.target.value)} /></div>
                       <div className="gnt-field"><label>Phone (optional)</label><input value={referralForm.referredPhone} onChange={e => updateReferralField("referredPhone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
                     </div>
-                    <div className="gnt-field"><label>Email (optional)</label><input type="email" value={referralForm.referredEmail} onChange={e => updateReferralField("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
+                    <div className="gnt-field"><label>Email (required — invite is sent here)</label><input type="email" value={referralForm.referredEmail} onChange={e => updateReferralField("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
 
                     <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Trade details</h4>
                     <div className="gnt-grid2">
@@ -1732,6 +1944,13 @@ export default function App() {
                             {r.referred_company_name}
                           </div>
                           <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {fmtTerms(r.terms)} · {r.location}</div>
+                          {r.status === "approved" && (
+                            <div style={{ fontSize: 11.5, color: "var(--steel-soft)", marginTop: 4 }}>
+                              Invite: <strong>{r.invite_status.replace("_", " ")}</strong>
+                              {r.invite_status === "sent" && " — waiting for them to complete registration"}
+                              {r.invite_status === "accepted" && " — live on the Market Board"}
+                            </div>
+                          )}
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div className="gnt-badge pending">{r.commission_status}</div>
@@ -1961,7 +2180,7 @@ export default function App() {
 
               {adminTab === "referrals" && (
                 <table className="gnt-table">
-                  <thead><tr><th>Broker</th><th>Referred party</th><th>CIPC / DMRE</th><th>Deal / Terms</th><th>Verification</th><th>Linked deal</th><th>Commission</th></tr></thead>
+                  <thead><tr><th>Broker</th><th>Referred party</th><th>CIPC / DMRE</th><th>Deal / Terms</th><th>Verification</th><th>Invite</th><th>Linked deal</th><th>Commission</th></tr></thead>
                   <tbody>
                     {adminReferrals.map(r => (
                       <tr key={r.id}>
@@ -1988,11 +2207,25 @@ export default function App() {
                             </div>
                           )}
                         </td>
+                        <td style={{ fontSize: 11.5 }}>
+                          {r.status !== "approved" ? (
+                            <span style={{ color: "var(--steel-soft)" }}>—</span>
+                          ) : (
+                            <>
+                              <span className={`gnt-badge ${r.invite_status === "accepted" ? "approved" : r.invite_status === "sent" ? "pending" : "rejected"}`}>{r.invite_status.replace("_", " ")}</span>
+                              {r.invite_status !== "accepted" && (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ display: "block", marginTop: 6 }} onClick={() => resendReferralInvite(r)}>
+                                  {r.invite_status === "sent" ? "Resend invite" : "Send invite"}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </td>
                         <td>
                           {r.matched_deal_id ? (
                             <span className="mono" style={{ fontSize: 11.5 }}>{r.matched_deal_id.slice(0, 8)}…</span>
-                          ) : r.status !== "approved" ? (
-                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Approve referral first</span>
+                          ) : r.invite_status !== "accepted" ? (
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Awaiting invite acceptance</span>
                           ) : linkDealFor === r.id ? (
                             <div style={{ display: "flex", gap: 6 }}>
                               <select value={linkDealChoice} onChange={e => setLinkDealChoice(e.target.value)} style={{ padding: "6px 8px" }}>
@@ -2011,7 +2244,7 @@ export default function App() {
                         </td>
                       </tr>
                     ))}
-                    {adminReferrals.length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No referrals submitted yet.</div></td></tr>}
+                    {adminReferrals.length === 0 && <tr><td colSpan={8}><div className="gnt-empty">No referrals submitted yet.</div></td></tr>}
                   </tbody>
                 </table>
               )}
