@@ -1217,14 +1217,24 @@ export default function App() {
                     ) : (
                       <div key={l.id} className="gnt-listing" style={{ marginBottom: 10 }}>
                         <div className="gnt-listing-top">
-                          <div><div className="gnt-listing-product">{l.product}</div><div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{l.volume.toLocaleString()} ℓ · {l.terms}</div></div>
+                          <div>
+                            <div className="gnt-listing-product">
+                              {l.product}
+                              {l.status === "inactive" && <span className="gnt-badge approved" style={{ marginLeft: 8, verticalAlign: "middle" }}>Matched</span>}
+                            </div>
+                            <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{l.volume.toLocaleString()} ℓ · {l.terms}</div>
+                          </div>
                           <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>per litre</small></div>
                         </div>
                         <div className="gnt-listing-meta"><span><MapPin size={13} /> {l.location}</span><span><Clock size={13} /> {l.availability}</span></div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
-                          <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
-                        </div>
+                        {l.status === "inactive" ? (
+                          <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>This listing was matched and is no longer available on the Market Board — see it under My matched deals below.</p>
+                        ) : (
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
+                            <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
+                          </div>
+                        )}
                       </div>
                     )
                   ))}
