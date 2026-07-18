@@ -48,6 +48,7 @@ const EMPTY_REG = {
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedure: "" };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
+  referredContactName: "", referredPhone: "", referredEmail: "",
   product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: [], notes: "",
 };
 
@@ -470,6 +471,10 @@ export default function App() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [passwordMsg, setPasswordMsg] = useState(null);
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ contactName: "", phone: "", address: "" });
+  const [profileError, setProfileError] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
   const [imfpaCommissionRate, setImfpaCommissionRate] = useState("0.10");
@@ -809,6 +814,29 @@ export default function App() {
     setShowSetPassword(false);
   }
 
+  function startEditProfile(company) {
+    setProfileForm({ contactName: company.contact_name || "", phone: company.phone || "", address: company.address || "" });
+    setProfileError("");
+    setShowEditProfile(true);
+  }
+
+  async function submitEditProfile(e, company) {
+    e.preventDefault();
+    if (!profileForm.contactName || !profileForm.phone) { setProfileError("Contact person and phone are required."); return; }
+    setProfileSaving(true);
+    const { error } = await supabase.from("companies").update({
+      contact_name: profileForm.contactName,
+      phone: profileForm.phone,
+      address: profileForm.address || null,
+    }).eq("user_id", session.user.id);
+    setProfileSaving(false);
+    if (error) { setProfileError(error.message); return; }
+    const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
+    setMyCompany(co);
+    setShowEditProfile(false);
+    showToast("Company details updated.");
+  }
+
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
@@ -849,6 +877,9 @@ export default function App() {
       referred_company_name: f.referredCompanyName,
       referred_cipc: f.referredCipc,
       referred_dmre_license: f.referredType === "seller" ? f.referredDmreLicense : null,
+      referred_contact_name: f.referredContactName || null,
+      referred_phone: f.referredPhone || null,
+      referred_email: f.referredEmail || null,
       product: f.product,
       volume: Number(f.volume),
       unit_price: Number(f.unitPrice),
@@ -1445,6 +1476,24 @@ export default function App() {
                 </div>
                 {myCompany.status === "pending" && <div className="gnt-info-banner"><Clock size={16} /> Awaiting admin review.</div>}
                 {myCompany.status === "rejected" && <div className="gnt-alert-banner"><XCircle size={16} /> This registration was not approved. Contact Tankbridge admin.</div>}
+
+                {!showEditProfile ? (
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 14 }} onClick={() => startEditProfile(myCompany)}>Edit contact person / phone / address</button>
+                ) : (
+                  <form onSubmit={e => submitEditProfile(e, myCompany)} style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+                    {profileError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {profileError}</div>}
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Contact person</label><input value={profileForm.contactName} onChange={e => setProfileForm(f => ({ ...f, contactName: e.target.value }))} /></div>
+                      <div className="gnt-field"><label>Phone</label><input value={profileForm.phone} onChange={e => setProfileForm(f => ({ ...f, phone: e.target.value }))} /></div>
+                    </div>
+                    <div className="gnt-field"><label>Address</label><textarea rows={2} value={profileForm.address} onChange={e => setProfileForm(f => ({ ...f, address: e.target.value }))} /></div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save"}</button>
+                      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShowEditProfile(false)}>Cancel</button>
+                    </div>
+                    <p className="hint" style={{ marginTop: 8 }}>Company name, CIPC, DMRE and email can't be changed here — contact admin if those need updating.</p>
+                  </form>
+                )}
               </div>
 
               {myCompany.status === "approved" && myCompany.type !== "broker" && (
@@ -1627,6 +1676,12 @@ export default function App() {
                         <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={referralForm.referredDmreLicense} onChange={e => updateReferralField("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
                       )}
                     </div>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Optional but recommended — lets Tankbridge (and, once matched, the counterparty) reach this company directly instead of only through you.</p>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Contact person (optional)</label><input value={referralForm.referredContactName} onChange={e => updateReferralField("referredContactName", e.target.value)} /></div>
+                      <div className="gnt-field"><label>Phone (optional)</label><input value={referralForm.referredPhone} onChange={e => updateReferralField("referredPhone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
+                    </div>
+                    <div className="gnt-field"><label>Email (optional)</label><input type="email" value={referralForm.referredEmail} onChange={e => updateReferralField("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
 
                     <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Trade details</h4>
                     <div className="gnt-grid2">
@@ -1852,12 +1907,25 @@ export default function App() {
                             )}
                           </td>
                           <td>
-                            <div style={{ display: "flex", gap: 6 }}>
-                              <input type="number" min="0" step="0.01" style={{ width: 100, padding: "6px 8px", border: "1.5px solid var(--line)" }}
-                                value={commissionEdits[d.id] ?? (d.platform_commission_amount ?? "")}
-                                onChange={e => updateCommissionInput(d.id, e.target.value)} />
-                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveCommission(d.id)}>Save</button>
-                            </div>
+                            {(() => {
+                              const sellerCo = adminCompanies.find(c => c.id === d.seller_company_id);
+                              const suggested = sellerCo?.imfpa_commission_rate ? Number(sellerCo.imfpa_commission_rate) * Number(d.volume) : null;
+                              return (
+                                <>
+                                  <div style={{ display: "flex", gap: 6 }}>
+                                    <input type="number" min="0" step="0.01" style={{ width: 100, padding: "6px 8px", border: "1.5px solid var(--line)" }}
+                                      value={commissionEdits[d.id] ?? (d.platform_commission_amount ?? "")}
+                                      onChange={e => updateCommissionInput(d.id, e.target.value)} />
+                                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveCommission(d.id)}>Save</button>
+                                  </div>
+                                  {suggested != null && !d.platform_commission_amount && (
+                                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 6, fontSize: 11 }} onClick={() => updateCommissionInput(d.id, suggested.toFixed(2))}>
+                                      Suggested: {fmtMoney(suggested)} (R{Number(sellerCo.imfpa_commission_rate).toFixed(2)}/ℓ × {Number(d.volume).toLocaleString()}ℓ)
+                                    </button>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </td>
                           <td>{fmtDate(d.created_at)}</td>
                         </tr>
@@ -1901,6 +1969,11 @@ export default function App() {
                         <td>
                           <span className={`gnt-badge ${r.referred_type === "seller" ? "selling" : "buying"}`}>{r.referred_type}</span>
                           <div style={{ fontWeight: 600, marginTop: 4 }}>{r.referred_company_name}</div>
+                          {(r.referred_contact_name || r.referred_phone || r.referred_email) && (
+                            <div style={{ fontSize: 11, color: "var(--steel-soft)" }}>
+                              {r.referred_contact_name}{r.referred_phone && ` · ${r.referred_phone}`}{r.referred_email && ` · ${r.referred_email}`}
+                            </div>
+                          )}
                         </td>
                         <td className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>
                           CIPC {r.referred_cipc}{r.referred_dmre_license && <><br />DMRE {r.referred_dmre_license}</>}
