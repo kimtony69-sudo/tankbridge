@@ -434,6 +434,7 @@ export default function App() {
   const [linkDealFor, setLinkDealFor] = useState(null); // referral being linked to a deal
   const [linkDealChoice, setLinkDealChoice] = useState("");
   const [commissionEdits, setCommissionEdits] = useState({}); // dealId -> input value
+  const [showCancelledDeals, setShowCancelledDeals] = useState(false);
 
   const [myReferrals, setMyReferrals] = useState([]);
   const [referralForm, setReferralForm] = useState(EMPTY_REFERRAL);
@@ -1768,45 +1769,52 @@ export default function App() {
               )}
 
               {adminTab === "deals" && (
-                <table className="gnt-table">
-                  <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Status</th><th>Self-reported</th><th>Platform commission (R)</th><th>Date</th></tr></thead>
-                  <tbody>
-                    {adminDeals.map(d => (
-                      <tr key={d.id}>
-                        <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {fmtTerms(d.terms)} · {d.location}</span></td>
-                        <td>{adminCompanies.find(c => c.id === d.seller_company_id)?.company_name}</td>
-                        <td>{adminCompanies.find(c => c.id === d.buyer_company_id)?.company_name}</td>
-                        <td>
-                          <span className={`gnt-badge ${d.status === "completed" ? "approved" : d.status === "cancelled" ? "rejected" : "pending"}`}>{d.status}</span>
-                          <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                            {d.status !== "completed" && <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setDealStatus(d.id, "completed")}>Mark completed</button>}
-                            {d.status !== "cancelled" && <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setDealStatus(d.id, "cancelled")}>Cancel</button>}
-                            {d.status !== "matched" && <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setDealStatus(d.id, "matched")}>Revert</button>}
-                          </div>
-                        </td>
-                        <td style={{ fontSize: 12 }}>
-                          <div>Seller: {d.seller_reported_status ? <strong>{d.seller_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
-                          {d.seller_fell_through_reason && <div style={{ color: "var(--steel-soft)", fontSize: 11 }}>Reason: {d.seller_fell_through_reason}</div>}
-                          <div style={{ marginTop: 4 }}>Buyer: {d.buyer_reported_status ? <strong>{d.buyer_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
-                          {d.buyer_fell_through_reason && <div style={{ color: "var(--steel-soft)", fontSize: 11 }}>Reason: {d.buyer_fell_through_reason}</div>}
-                          {d.status === "matched" && (d.seller_reported_status === "fell_through" || d.buyer_reported_status === "fell_through") && (
-                            <button className="gnt-btn gnt-btn-danger gnt-btn-sm" style={{ marginTop: 8 }} onClick={() => confirmFellThrough(d.id)}>Confirm — remove listing</button>
-                          )}
-                        </td>
-                        <td>
-                          <div style={{ display: "flex", gap: 6 }}>
-                            <input type="number" min="0" step="0.01" style={{ width: 100, padding: "6px 8px", border: "1.5px solid var(--line)" }}
-                              value={commissionEdits[d.id] ?? (d.platform_commission_amount ?? "")}
-                              onChange={e => updateCommissionInput(d.id, e.target.value)} />
-                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveCommission(d.id)}>Save</button>
-                          </div>
-                        </td>
-                        <td>{fmtDate(d.created_at)}</td>
-                      </tr>
-                    ))}
-                    {adminDeals.length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
-                  </tbody>
-                </table>
+                <>
+                  {adminDeals.some(d => d.status === "cancelled") && (
+                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginBottom: 10 }} onClick={() => setShowCancelledDeals(s => !s)}>
+                      {showCancelledDeals ? "Hide" : "Show"} {adminDeals.filter(d => d.status === "cancelled").length} cancelled deal(s)
+                    </button>
+                  )}
+                  <table className="gnt-table">
+                    <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Status</th><th>Self-reported</th><th>Platform commission (R)</th><th>Date</th></tr></thead>
+                    <tbody>
+                      {adminDeals.filter(d => showCancelledDeals || d.status !== "cancelled").map(d => (
+                        <tr key={d.id}>
+                          <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {fmtTerms(d.terms)} · {d.location}</span></td>
+                          <td>{adminCompanies.find(c => c.id === d.seller_company_id)?.company_name}</td>
+                          <td>{adminCompanies.find(c => c.id === d.buyer_company_id)?.company_name}</td>
+                          <td>
+                            <span className={`gnt-badge ${d.status === "completed" ? "approved" : d.status === "cancelled" ? "rejected" : "pending"}`}>{d.status}</span>
+                            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                              {d.status !== "completed" && <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setDealStatus(d.id, "completed")}>Mark completed</button>}
+                              {d.status !== "cancelled" && <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setDealStatus(d.id, "cancelled")}>Cancel</button>}
+                              {d.status !== "matched" && <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setDealStatus(d.id, "matched")}>Revert</button>}
+                            </div>
+                          </td>
+                          <td style={{ fontSize: 12 }}>
+                            <div>Seller: {d.seller_reported_status ? <strong>{d.seller_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
+                            {d.seller_fell_through_reason && <div style={{ color: "var(--steel-soft)", fontSize: 11 }}>Reason: {d.seller_fell_through_reason}</div>}
+                            <div style={{ marginTop: 4 }}>Buyer: {d.buyer_reported_status ? <strong>{d.buyer_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
+                            {d.buyer_fell_through_reason && <div style={{ color: "var(--steel-soft)", fontSize: 11 }}>Reason: {d.buyer_fell_through_reason}</div>}
+                            {d.status === "matched" && (d.seller_reported_status === "fell_through" || d.buyer_reported_status === "fell_through") && (
+                              <button className="gnt-btn gnt-btn-danger gnt-btn-sm" style={{ marginTop: 8 }} onClick={() => confirmFellThrough(d.id)}>Confirm — remove listing</button>
+                            )}
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input type="number" min="0" step="0.01" style={{ width: 100, padding: "6px 8px", border: "1.5px solid var(--line)" }}
+                                value={commissionEdits[d.id] ?? (d.platform_commission_amount ?? "")}
+                                onChange={e => updateCommissionInput(d.id, e.target.value)} />
+                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveCommission(d.id)}>Save</button>
+                            </div>
+                          </td>
+                          <td>{fmtDate(d.created_at)}</td>
+                        </tr>
+                      ))}
+                      {adminDeals.filter(d => showCancelledDeals || d.status !== "cancelled").length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
+                    </tbody>
+                  </table>
+                </>
               )}
 
               {adminTab === "listings" && (
