@@ -21,16 +21,39 @@ function fmtMoney(n) {
   if (isNaN(num)) return "-";
   return "R " + num.toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+function fmtTerms(t) {
+  if (!t) return "-";
+  return Array.isArray(t) ? t.join(" / ") : t;
+}
 
 const EMPTY_REG = {
   companyName: "", cipc: "", dmreLicense: "", address: "", contactName: "", phone: "", email: "",
-  product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: TRADE_TERMS[0],
+  password: "", confirmPassword: "",
+  product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
+  // broker-only: the first referral they submit as part of registering
+  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
 };
-const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: "COC", location: "", availability: "", notes: "", procedure: "" };
+const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedure: "" };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
-  product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: "COC", notes: "",
+  product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: [], notes: "",
 };
+
+function toggleTerm(list, term) {
+  return list.includes(term) ? list.filter(t => t !== term) : [...list, term];
+}
+function TermsCheckboxGroup({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+      {TRADE_TERMS.map(t => (
+        <label key={t} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, cursor: "pointer" }}>
+          <input type="checkbox" checked={value.includes(t)} onChange={() => onChange(toggleTerm(value, t))} />
+          {t}
+        </label>
+      ))}
+    </div>
+  );
+}
 
 const STYLE = `
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -191,26 +214,34 @@ const STYLE = `
 }
 `;
 
-function LoginGate({ onSent }) {
+function LoginGate({ onLoggedIn, onRegisterClick, hideRegisterLink }) {
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [magicSent, setMagicSent] = useState(false);
 
-  async function send(e) {
+  async function submitLogin(e) {
     e.preventDefault();
     setErr("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    });
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
     if (error) { setErr(error.message); return; }
-    setSent(true);
-    if (onSent) onSent(email);
+    if (onLoggedIn) onLoggedIn();
   }
 
-  if (sent) {
+  async function sendMagicLink() {
+    if (!email) { setErr("Enter your email above first."); return; }
+    setErr("");
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    if (error) { setErr(error.message); return; }
+    setMagicSent(true);
+  }
+
+  if (magicSent) {
     return (
-      <div className="gnt-card" style={{ textAlign: "center", padding: 28 }}>
+      <div className="gnt-card" style={{ textAlign: "center", padding: 28, maxWidth: 420 }}>
         <Mail size={26} style={{ marginBottom: 10 }} />
         <p style={{ fontSize: 14 }}>We've sent a login link to {email}. Check your inbox and click the link — keep this tab open.</p>
       </div>
@@ -218,24 +249,37 @@ function LoginGate({ onSent }) {
   }
 
   return (
-    <form onSubmit={send} className="gnt-card" style={{ maxWidth: 420 }}>
-      <h3 style={{ fontSize: 18, marginBottom: 10 }}>Sign in / Register with email</h3>
-      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>No password needed. Click the link we email you and you're signed in.</p>
+    <div className="gnt-card" style={{ maxWidth: 420 }}>
+      <h3 style={{ fontSize: 18, marginBottom: 10 }}>Log in</h3>
+      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Already registered? Enter your email and password.</p>
       {err && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {err}</div>}
-      <div className="gnt-field"><label>Email</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.co.za" /></div>
-      <button className="gnt-btn gnt-btn-ink" type="submit"><LogIn size={15} /> Send login link</button>
-    </form>
+      <form onSubmit={submitLogin}>
+        <div className="gnt-field"><label>Email</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.co.za" /></div>
+        <div className="gnt-field"><label>Password</label><input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" /></div>
+        <button className="gnt-btn gnt-btn-ink" type="submit" disabled={loading}><LogIn size={15} /> {loading ? "Logging in…" : "Log in"}</button>
+      </form>
+      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 10 }} type="button" onClick={sendMagicLink}>Forgot your password? Email me a login link</button>
+      {!hideRegisterLink && (
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+          <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>New company — not registered yet?</p>
+          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="button" onClick={onRegisterClick}>Register now</button>
+        </div>
+      )}
+    </div>
   );
 }
 
 
-function DealCard({ deal, myCompany }) {
+function DealCard({ deal, myCompany, onReported }) {
   const [info, setInfo] = useState(null);
   const [gated, setGated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [reporting, setReporting] = useState(false);
 
   const isSellerViewing = myCompany.id === deal.seller_company_id;
+  const myReportedStatus = isSellerViewing ? deal.seller_reported_status : deal.buyer_reported_status;
+  const otherReportedStatus = isSellerViewing ? deal.buyer_reported_status : deal.seller_reported_status;
 
   async function reveal() {
     setLoading(true);
@@ -252,10 +296,20 @@ function DealCard({ deal, myCompany }) {
     setLoading(false);
   }
 
+  async function report(outcome) {
+    setReporting(true);
+    const { error } = await supabase.rpc("report_deal_outcome", { p_deal_id: deal.id, p_outcome: outcome });
+    setReporting(false);
+    if (!error && onReported) onReported();
+  }
+
   return (
     <div className="gnt-card" style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>{deal.product} · {Number(deal.volume).toLocaleString()} ℓ · {deal.terms} · {deal.location}</div>
+        <div>
+          <span className={`gnt-badge ${deal.status === "completed" ? "approved" : deal.status === "cancelled" ? "rejected" : "pending"}`} style={{ marginBottom: 6 }}>{deal.status}</span>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>{deal.product} · {Number(deal.volume).toLocaleString()} ℓ · {fmtTerms(deal.terms)} · {deal.location}</div>
+        </div>
         <div className="mono" style={{ fontWeight: 600 }}>{fmtMoney(deal.unit_price)}/ℓ</div>
       </div>
       {!checked ? (
@@ -268,6 +322,25 @@ function DealCard({ deal, myCompany }) {
         <div className="gnt-info-banner"><CheckCircle2 size={16} /> {info.company_name} — {info.contact_name}, {info.phone}, {info.email}</div>
       ) : (
         <div className="gnt-alert-banner"><AlertTriangle size={16} /> Could not load contact details.</div>
+      )}
+
+      {deal.status !== "completed" && deal.status !== "cancelled" && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+          {myReportedStatus ? (
+            <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>
+              You reported this deal as <strong>{myReportedStatus === "completed" ? "completed" : "fell through"}</strong>.
+              {otherReportedStatus ? " The other party has also reported an outcome — admin has been notified." : " Waiting on the other party / admin to confirm."}
+            </p>
+          ) : (
+            <>
+              <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>Let Tankbridge know how this deal turned out — admin can't tell otherwise.</p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={reporting} onClick={() => report("completed")}>Report: Deal completed</button>
+                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={reporting} onClick={() => report("fell_through")}>Report: Deal fell through</button>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -284,6 +357,10 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [boardListings, setBoardListings] = useState([]);
+  const [publicBlacklist, setPublicBlacklist] = useState([]);
+  const [adminBlacklist, setAdminBlacklist] = useState([]);
+  const [blacklistForm, setBlacklistForm] = useState({ companyName: "", reason: "" });
+  const [blacklistError, setBlacklistError] = useState("");
   const [myListings, setMyListings] = useState([]);
   const [myDeals, setMyDeals] = useState([]);
   const [adminCompanies, setAdminCompanies] = useState([]);
@@ -301,10 +378,11 @@ export default function App() {
   const [referralName, setReferralName] = useState("");
 
   const [regType, setRegType] = useState("seller");
-  const [regStep, setRegStep] = useState("form"); // form -> login -> ncnda -> done
+  const [regStep, setRegStep] = useState("form"); // form -> confirm-email (only if email confirmation required) -> ncnda -> done
   const [regForm, setRegForm] = useState(EMPTY_REG);
   const [ncndaAgree, setNcndaAgree] = useState(false);
   const [ncndaName, setNcndaName] = useState("");
+  const [ncndaScrolledEnd, setNcndaScrolledEnd] = useState(false);
   const [regError, setRegError] = useState("");
 
   const [listingForm, setListingForm] = useState(EMPTY_LISTING);
@@ -312,6 +390,12 @@ export default function App() {
   const [editingListing, setEditingListing] = useState(null);
   const [editError, setEditError] = useState("");
   const [showImfpaForm, setShowImfpaForm] = useState(false);
+  const [imfpaJustSigned, setImfpaJustSigned] = useState(false);
+  const [showSetPassword, setShowSetPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordMsg, setPasswordMsg] = useState(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
 
@@ -343,7 +427,7 @@ export default function App() {
       setCompanyChecked(true);
       const { data: adminFlag } = await supabase.rpc("is_admin");
       setIsAdmin(!!adminFlag);
-      if (regStep === "login") setRegStep("ncnda");
+      if (regStep === "login" || regStep === "confirm-email") setRegStep("ncnda");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -356,6 +440,13 @@ export default function App() {
     setBoardListings(data || []);
   }, []);
   useEffect(() => { loadMarketBoard(); }, [loadMarketBoard]);
+
+  // ---------- PUBLIC BLACKLIST (visible to everyone, even logged out) ----------
+  const loadPublicBlacklist = useCallback(async () => {
+    const { data } = await supabase.from("blacklist").select("*").order("created_at", { ascending: false });
+    setPublicBlacklist(data || []);
+  }, []);
+  useEffect(() => { loadPublicBlacklist(); }, [loadPublicBlacklist]);
 
   // ---------- MY LISTINGS / DEALS ----------
   const loadMyListings = useCallback(async () => {
@@ -383,16 +474,18 @@ export default function App() {
   // ---------- ADMIN DATA ----------
   const loadAdminData = useCallback(async () => {
     if (!isAdmin) return;
-    const [{ data: cos }, { data: deals }, { data: listings }, { data: referrals }] = await Promise.all([
+    const [{ data: cos }, { data: deals }, { data: listings }, { data: referrals }, { data: bl }] = await Promise.all([
       supabase.from("companies").select("*").order("created_at", { ascending: false }),
       supabase.from("deals").select("*").order("created_at", { ascending: false }),
       supabase.from("listings").select("*").order("created_at", { ascending: false }),
       supabase.from("referrals").select("*").order("created_at", { ascending: false }),
+      supabase.from("blacklist").select("*").order("created_at", { ascending: false }),
     ]);
     setAdminCompanies(cos || []);
     setAdminDeals(deals || []);
     setAdminListings(listings || []);
     setAdminReferrals(referrals || []);
+    setAdminBlacklist(bl || []);
   }, [isAdmin]);
   useEffect(() => { loadAdminData(); }, [loadAdminData]);
 
@@ -404,20 +497,61 @@ export default function App() {
       return "Please complete all fields (CIPC number is required).";
     }
     if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
-    if (regType === "broker") return ""; // Brokers don't need their own trade volume/price info
+
+    if (!session) {
+      if (!regForm.password || regForm.password.length < 6) return "Please choose a password of at least 6 characters.";
+      if (regForm.password !== regForm.confirmPassword) return "Passwords do not match.";
+    }
+
+    if (regType === "broker") {
+      if (!regForm.referredCompanyName || !regForm.referredCipc) return "Please enter the referred company's name and CIPC number.";
+      if (regForm.referredType === "seller" && !regForm.referredDmreLicense) return "DMRE wholesale license is required when referring a seller.";
+      if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
+      if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
+      if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
+      if (!regForm.tradeTerms || regForm.tradeTerms.length === 0) return "Select at least one trading term.";
+      return "";
+    }
+
     if (regType === "seller" && !regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
     if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price you want to trade.";
     if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
     if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
+    if (!regForm.tradeTerms || regForm.tradeTerms.length === 0) return "Select at least one trading term.";
     return "";
   }
 
-  function submitRegForm(e) {
+  async function submitRegForm(e) {
     e.preventDefault();
     const err = validateRegForm();
     if (err) { setRegError(err); return; }
     setRegError("");
-    setRegStep(session ? "ncnda" : "login");
+    setNcndaScrolledEnd(false);
+
+    if (session) {
+      // already logged in (e.g. came back mid-flow) — just continue
+      setRegStep("ncnda");
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: regForm.email,
+      password: regForm.password,
+    });
+    if (error) { setRegError(error.message); return; }
+
+    if (data.session) {
+      setRegStep("ncnda");
+    } else {
+      // Supabase project has "Confirm email" turned on — user must click the
+      // confirmation link before they have a session.
+      setRegStep("confirm-email");
+    }
+  }
+
+  function handleNcndaScroll(e) {
+    const el = e.target;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) setNcndaScrolledEnd(true);
   }
 
   async function finalizeRegistration(e) {
@@ -448,7 +582,7 @@ export default function App() {
     // Buyers/sellers get their signup volume/price/location auto-published as their first listing
     // (this listing flips to active automatically when admin approves the company)
     if (regType !== "broker") {
-      await supabase.from("listings").insert({
+      const { error: listingError } = await supabase.from("listings").insert({
         company_id: data.id,
         kind: regType === "seller" ? "sell" : "buy",
         product: regForm.product,
@@ -459,6 +593,28 @@ export default function App() {
         availability: "Immediate",
         status: "pending",
       });
+      if (listingError) console.error("initial listing insert error", listingError);
+    }
+
+    // Brokers submit their first referral (buyer or seller) as part of registration —
+    // it goes to admin for CIPC/DMRE verification, same as any later referral from their Dashboard.
+    if (regType === "broker") {
+      const { error: refError } = await supabase.from("referrals").insert({
+        broker_company_id: data.id,
+        referred_type: regForm.referredType,
+        referred_company_name: regForm.referredCompanyName,
+        referred_cipc: regForm.referredCipc,
+        referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
+        product: regForm.product,
+        volume: Number(regForm.tradeVolume),
+        unit_price: Number(regForm.tradePrice),
+        location: resolvedLocation,
+        terms: regForm.tradeTerms,
+        agreement_accepted: true,
+        agreement_accepted_by: ncndaName,
+        agreement_accepted_at: new Date().toISOString(),
+      });
+      if (refError) console.error("referral insert error", refError);
     }
 
     setMyCompany(data);
@@ -466,7 +622,7 @@ export default function App() {
     showToast("Registration submitted — Tankbridge admin has been notified.");
   }
 
-  function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); goto("register"); }
+  function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); setNcndaAgree(false); setNcndaScrolledEnd(false); goto("register"); }
 
   // ---------- LISTINGS (dashboard) ----------
   function updateListingField(field, value) { setListingForm(f => ({ ...f, [field]: value })); }
@@ -477,6 +633,7 @@ export default function App() {
     if (!listingForm.product || !listingForm.volume || !listingForm.unitPrice || !listingForm.location || !listingForm.availability) {
       setListingError("Please complete all required fields."); return;
     }
+    if (!listingForm.terms || listingForm.terms.length === 0) { setListingError("Select at least one trading term."); return; }
     if (vol < 40000) { setListingError("Minimum tradable volume is 40,000 litres."); return; }
     setListingError("");
     const { error } = await supabase.from("listings").insert({
@@ -490,6 +647,7 @@ export default function App() {
       availability: listingForm.availability,
       notes: listingForm.notes,
       procedure: listingForm.procedure,
+      status: "active", // this form is only reachable once the company is already approved
     });
     if (error) { setListingError(error.message); return; }
     setListingForm(EMPTY_LISTING);
@@ -508,6 +666,7 @@ export default function App() {
     if (!editingListing.product || !editingListing.volume || !editingListing.unit_price || !editingListing.location || !editingListing.availability) {
       setEditError("Please complete all required fields."); return;
     }
+    if (!editingListing.terms || editingListing.terms.length === 0) { setEditError("Select at least one trading term."); return; }
     if (vol < 40000) { setEditError("Minimum tradable volume is 40,000 litres."); return; }
     const { error } = await supabase.from("listings").update({
       volume: vol,
@@ -532,6 +691,20 @@ export default function App() {
   }
 
   // ---------- IMFPA (dashboard, sellers) ----------
+  async function submitSetPassword(e) {
+    e.preventDefault();
+    if (newPassword.length < 6) { setPasswordMsg({ text: "Password must be at least 6 characters.", err: true }); return; }
+    if (newPassword !== confirmNewPassword) { setPasswordMsg({ text: "Passwords do not match.", err: true }); return; }
+    setPasswordSaving(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setPasswordSaving(false);
+    if (error) { setPasswordMsg({ text: error.message, err: true }); return; }
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setPasswordMsg({ text: "Password set — use it to log in next time.", err: false });
+    setShowSetPassword(false);
+  }
+
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
@@ -543,6 +716,7 @@ export default function App() {
     setShowImfpaForm(false);
     setImfpaAgree(false);
     setImfpaName("");
+    setImfpaJustSigned(true);
     showToast("IMFPA signed — buyer contact details on matched deals are now released.");
   }
 
@@ -552,7 +726,7 @@ export default function App() {
   async function submitReferral(e) {
     e.preventDefault();
     const f = referralForm;
-    if (!f.referredCompanyName || !f.referredCipc || !f.volume || !f.unitPrice || !f.location || !f.terms) {
+    if (!f.referredCompanyName || !f.referredCipc || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
       setReferralError("Please complete all required fields."); return;
     }
     if (f.referredType === "seller" && !f.referredDmreLicense) {
@@ -590,7 +764,7 @@ export default function App() {
   const visibleListings = boardListings
     .filter(l => marketFilter.kind === "all" || l.kind === marketFilter.kind)
     .filter(l => marketFilter.product === "all" || l.product === marketFilter.product)
-    .filter(l => marketFilter.terms === "all" || l.terms === marketFilter.terms);
+    .filter(l => marketFilter.terms === "all" || (Array.isArray(l.terms) ? l.terms.includes(marketFilter.terms) : l.terms === marketFilter.terms));
 
   function openAccept(listing) { setAcceptTarget(listing); setAcceptStep(1); setAcceptError(""); }
 
@@ -632,6 +806,36 @@ export default function App() {
     await supabase.rpc("recalculate_referral_commission", { p_deal_id: dealId });
     await loadAdminData();
     showToast("Platform commission saved — linked broker commission has been recalculated.");
+  }
+
+  async function setDealStatus(dealId, newStatus) {
+    const { error } = await supabase.rpc("set_deal_status", { p_deal_id: dealId, p_new_status: newStatus });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    await loadMarketBoard();
+    showToast(
+      newStatus === "completed" ? "Deal marked completed — listing removed from the Market Board."
+      : newStatus === "cancelled" ? "Deal cancelled — listing stays live for other buyers."
+      : "Deal reverted to matched."
+    );
+  }
+
+  async function addBlacklistEntry(e) {
+    e.preventDefault();
+    if (!blacklistForm.companyName || !blacklistForm.reason) { setBlacklistError("Company name and reason are both required."); return; }
+    setBlacklistError("");
+    const { error } = await supabase.from("blacklist").insert({ company_name: blacklistForm.companyName, reason: blacklistForm.reason });
+    if (error) { setBlacklistError(error.message); return; }
+    setBlacklistForm({ companyName: "", reason: "" });
+    await loadAdminData();
+    await loadPublicBlacklist();
+    showToast("Company added to the public blacklist.");
+  }
+
+  async function removeBlacklistEntry(id) {
+    await supabase.from("blacklist").delete().eq("id", id);
+    await loadAdminData();
+    await loadPublicBlacklist();
   }
 
   async function linkReferralToDeal(referralId, dealId) {
@@ -723,7 +927,7 @@ export default function App() {
                     <div className="gnt-manifest-row"><span className="k">Product</span><span className="v">{latestOffer.product}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Volume</span><span className="v">{Number(latestOffer.volume).toLocaleString()} ℓ</span></div>
                     <div className="gnt-manifest-row"><span className="k">Price</span><span className="v">{fmtMoney(latestOffer.unit_price)}/ℓ</span></div>
-                    <div className="gnt-manifest-row"><span className="k">Terms</span><span className="v">{latestOffer.terms}</span></div>
+                    <div className="gnt-manifest-row"><span className="k">Terms</span><span className="v">{fmtTerms(latestOffer.terms)}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Location</span><span className="v">{latestOffer.location}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Verification</span><span className="v" style={{ color: "#3f6b52" }}>CIPC + DMRE ✓</span></div>
                   </>
@@ -795,6 +999,27 @@ export default function App() {
               Tankbridge acts solely as an introducing intermediary and is not a party to any resulting sale, purchase, or delivery agreement. Tankbridge makes no representation or warranty as to quality, quantity, title, deliverability, or any counterparty's ability to perform. Any dispute is strictly between the buyer and seller involved. To the fullest extent permitted by South African law, Tankbridge's liability is limited to any brokerage fee actually received in respect of the transaction giving rise to the claim. Users should seek independent legal and commercial advice before entering into any transaction.
             </div>
           </section>
+
+          <section style={{ padding: "8px 0 40px" }}>
+            <h3 style={{ fontSize: 20, marginBottom: 6 }}>Non-payment blacklist</h3>
+            <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Companies that conclude a deal via Tankbridge and refuse to pay the agreed commission are published here with the reason.</p>
+            {publicBlacklist.length === 0 ? (
+              <div className="gnt-empty" style={{ padding: "24px 20px" }}>No companies currently blacklisted.</div>
+            ) : (
+              <table className="gnt-table">
+                <thead><tr><th>Company</th><th>Reason</th><th>Date</th></tr></thead>
+                <tbody>
+                  {publicBlacklist.map(b => (
+                    <tr key={b.id}>
+                      <td>{b.company_name}</td>
+                      <td>{b.reason}</td>
+                      <td>{fmtDate(b.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
         </>
       )}
 
@@ -831,11 +1056,53 @@ export default function App() {
                   <div className="gnt-field"><label>Phone</label><input value={regForm.phone} onChange={e => updateReg("phone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
                 </div>
                 <div className="gnt-field"><label>Email</label><input type="email" value={regForm.email} onChange={e => updateReg("email", e.target.value)} placeholder="you@company.co.za" />
-                  <div className="hint">Use the same email you'll log in with.</div>
+                  <div className="hint">This is also your login email.</div>
                 </div>
+                {!session && (
+                  <div className="gnt-grid2">
+                    <div className="gnt-field"><label>Choose a password</label><input type="password" value={regForm.password} onChange={e => updateReg("password", e.target.value)} placeholder="At least 6 characters" /></div>
+                    <div className="gnt-field"><label>Confirm password</label><input type="password" value={regForm.confirmPassword} onChange={e => updateReg("confirmPassword", e.target.value)} placeholder="Re-enter password" /></div>
+                  </div>
+                )}
 
                 {regType === "broker" ? (
-                  <div className="gnt-info-banner"><CheckCircle2 size={16} /> Brokers don't trade directly — once approved, you'll add buyer/seller referrals from your Dashboard.</div>
+                  <>
+                    <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>Who are you introducing?</h3>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>You can add more buyer/seller referrals from your Dashboard later — this is just your first one.</p>
+                    <div className="gnt-type-toggle">
+                      <button type="button" className={regForm.referredType === "seller" ? "active" : ""} onClick={() => updateReg("referredType", "seller")}>Referring a Seller</button>
+                      <button type="button" className={regForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReg("referredType", "buyer")}>Referring a Buyer</button>
+                    </div>
+                    <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={regForm.referredCompanyName} onChange={e => updateReg("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.referredCipc} onChange={e => updateReg("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                      {regForm.referredType === "seller" && (
+                        <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.referredDmreLicense} onChange={e => updateReg("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                      )}
+                    </div>
+                    <div className="gnt-field"><label>Product</label>
+                      <select value={regForm.product} onChange={e => updateReg("product", e.target.value)}>
+                        {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={regForm.tradeVolume} onChange={e => updateReg("tradeVolume", e.target.value)} placeholder="40000" /></div>
+                      <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={regForm.tradePrice} onChange={e => updateReg("tradePrice", e.target.value)} placeholder="21.45" /></div>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Location</label>
+                        <select value={regForm.tradeLocation} onChange={e => updateReg("tradeLocation", e.target.value)}>
+                          {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                        </select>
+                        {regForm.tradeLocation === "Other" && (
+                          <input style={{ marginTop: 8 }} value={regForm.tradeLocationOther} onChange={e => updateReg("tradeLocationOther", e.target.value)} placeholder="Specify location" />
+                        )}
+                      </div>
+                      <div className="gnt-field"><label>Terms (select all that apply)</label>
+                        <TermsCheckboxGroup value={regForm.tradeTerms} onChange={v => updateReg("tradeTerms", v)} />
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>{regType === "seller" ? "What are you looking to sell?" : "What are you looking to buy?"}</h3>
@@ -857,10 +1124,8 @@ export default function App() {
                           <input style={{ marginTop: 8 }} value={regForm.tradeLocationOther} onChange={e => updateReg("tradeLocationOther", e.target.value)} placeholder="Specify location" />
                         )}
                       </div>
-                      <div className="gnt-field"><label>Terms</label>
-                        <select value={regForm.tradeTerms} onChange={e => updateReg("tradeTerms", e.target.value)}>
-                          {TRADE_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
+                      <div className="gnt-field"><label>Terms (select all that apply)</label>
+                        <TermsCheckboxGroup value={regForm.tradeTerms} onChange={v => updateReg("tradeTerms", v)} />
                       </div>
                     </div>
                   </>
@@ -870,37 +1135,59 @@ export default function App() {
             </>
           )}
 
-          {regStep === "login" && (
+          {regStep === "confirm-email" && (
             <>
               <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setRegStep("form")} style={{ marginBottom: 18 }}><ArrowLeft size={14} /> Back</button>
-              <h2 style={{ fontSize: 28, marginBottom: 10 }}>One more step — confirm it's you</h2>
-              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>We need to confirm your email before submitting the registration. Once you click the link in your inbox, come back to this tab.</p>
-              <LoginGate />
+              <h2 style={{ fontSize: 28, marginBottom: 10 }}>Confirm your email</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>We've sent a confirmation link to <strong>{regForm.email}</strong>. Click it, then log in below with the password you just chose to continue your registration.</p>
+              <LoginGate hideRegisterLink />
             </>
           )}
 
           {regStep === "ncnda" && (
             <>
-              <h2 style={{ fontSize: 30, marginBottom: 6 }}>NCNDA — Non-Circumvention, Non-Disclosure Agreement</h2>
-              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>Required for both buyers and sellers before admin approval.</p>
-              <div className="gnt-doc-box">
-                <h4>1. Parties</h4>
-                <p>This Non-Circumvention, Non-Disclosure Agreement ("Agreement") is entered into between <strong>{regForm.companyName || "the registering party"}</strong> ("Party") and Tankbridge, acting as intermediary/broker ("Intermediary"), governing all bulk diesel opportunities introduced via the Tankbridge platform.</p>
-                <h4>2. Non-circumvention</h4>
-                <p>Party agrees not to contact, transact with, or otherwise circumvent any counterparty introduced by Tankbridge, directly or indirectly, without Tankbridge's written consent, for the duration of this Agreement and for 24 months thereafter.</p>
-                <h4>3. Non-disclosure</h4>
-                <p>Party agrees to keep confidential all counterparty names, pricing, volumes and terms shared via the platform.</p>
-                <h4>4. Governing law</h4>
-                <p>This Agreement is governed by the laws of the Republic of South Africa.</p>
-                <div className="gnt-sig-line">This is a standard template provided for demonstration purposes. Tankbridge recommends independent legal review before commercial use.</div>
+              <h2 style={{ fontSize: 30, marginBottom: 6 }}>NCNDA — Non-Circumvention, Non-Disclosure &amp; Fee Protection Agreement</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>Required for buyers, sellers and brokers before admin approval. Please scroll to the end to enable agreement.</p>
+              <div className="gnt-doc-box" onScroll={handleNcndaScroll} style={{ maxHeight: 320 }}>
+                <h4>1. Parties and Purpose</h4>
+                <p>This Non-Circumvention, Non-Disclosure, and Fee Protection Agreement (the "Agreement") is entered into by and between Tankbridge (acting as the "Intermediary" and trading platform), and the registered platform user, whether acting as a Buyer, Seller, or representative thereof — in this registration, <strong>{regForm.companyName || "the registering party"}</strong> (the "Party").</p>
+                <p>This Agreement governs all bulk diesel opportunities, counterparties, sources of supply, and transaction structures introduced, facilitated, or made visible via the Tankbridge platform.</p>
+
+                <h4>2. Strict Non-Circumvention</h4>
+                <p>The Party explicitly covenants and agrees that it shall not, directly or indirectly, contact, solicit, negotiate with, contract with, or conduct any business with any counterparty, supplier, buyer, refinery, or terminal introduced by Tankbridge, without the express prior written consent of Tankbridge.</p>
+                <p>This restriction applies to: direct transactions, or indirect transactions through affiliates, subsidiaries, agents, nominees, or related third parties; and the entire duration of the Party's registration on the Tankbridge platform, and for a period of twenty-four (24) months following the termination of this Agreement or the deactivation of the Party's account, whichever is later.</p>
+
+                <h4>3. Non-Disclosure &amp; Confidentiality</h4>
+                <p>The Party shall maintain strict confidentiality regarding all proprietary information obtained through the platform. This includes, but is not limited to: counterparty identities, corporate structures, DMRE wholesale licence details, pricing mechanisms, available volumes, logistics arrangements, and financial terms (the "Confidential Information").</p>
+                <p>Confidential Information shall not be disclosed to any third party, nor used for any competitive or commercial purpose outside of transactions directly executed on Tankbridge, without prior written authorization.</p>
+
+                <h4>4. Heavy Penalties for Circumvention &amp; Fee Protection</h4>
+                <p>In the event of any breach of Section 2 (Circumvention) or unauthorized bypass of the Tankbridge platform, the Party acknowledges that Tankbridge will suffer immediate and irreparable financial harm. Therefore, the Party agrees to the following liquidated damages and compensation structure:</p>
+                <p><strong>Forfeiture of Full Commission</strong> — The breaching Party shall be immediately liable to pay Tankbridge the full, unmitigated intermediary fee/commission that would have been due on the unauthorized transaction.</p>
+                <p><strong>Compounded Damaged Volumes</strong> — If the circumvented transaction involves ongoing or recurring supply, the breaching Party shall pay Tankbridge a liquidated damages fee equal to R0.10 per litre of the total volume contracted, delivered, or contemplated under the circumvented relationship for the entire 24-month period, regardless of whether Tankbridge was actively involved in the subsequent transactions.</p>
+                <p><strong>Punitive/Liquidated Damages</strong> — The Party agrees to pay an immediate, non-refundable penalty fee of Five Million Rand (R5,000,000) per established breach as a reasonable pre-estimate of administrative and punitive damages, without prejudice to Tankbridge's right to seek higher actual damages in court.</p>
+                <p><strong>Legal Fees</strong> — The breaching Party shall be liable for all legal costs incurred by Tankbridge in enforcing this Agreement, calculated on an attorney-and-own-client scale, including collection commission and tracing fees.</p>
+
+                <h4>5. Governing Law and Jurisdiction</h4>
+                <p>This Agreement, and any dispute arising out of or in connection with it, shall be governed by, and construed in accordance with, the laws of the Republic of South Africa. Both Parties consent to the non-exclusive jurisdiction of the High Court of South Africa.</p>
+
+                {regType === "broker" && (
+                  <>
+                    <h4>6. Referral commission</h4>
+                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration), Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete. Broker confirms the CIPC/DMRE details submitted for the referred party are accurate to the best of its knowledge.</p>
+                  </>
+                )}
+
+                <div className="gnt-sig-line">This document is a highly restrictive and legally binding agreement designed to protect proprietary platform relationships. Tankbridge strongly advises the Party to obtain independent legal counsel before agreeing to these terms. By checking "I have read all of it, and I agree" or registering on the platform, you acknowledge that you have read, understood, and agreed to be bound by the severe financial penalties outlined herein.</div>
               </div>
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={finalizeRegistration}>
-                <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
-                  <input type="checkbox" checked={ncndaAgree} onChange={e => setNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
-                  <span>I have read and agree to the NCNDA above on behalf of the company named in this registration.</span>
+                <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 6, cursor: ncndaScrolledEnd ? "pointer" : "not-allowed", opacity: ncndaScrolledEnd ? 1 : 0.5 }}>
+                  <input type="checkbox" checked={ncndaAgree} disabled={!ncndaScrolledEnd} onChange={e => setNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
+                  <span>I have read all of it, and I agree to the {regType === "broker" ? "NCNDA and Referral commission terms" : "NCNDA"} above on behalf of the company named in this registration.</span>
                 </label>
-                <div className="gnt-field"><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
+                {!ncndaScrolledEnd && <div className="hint" style={{ marginBottom: 16 }}>Scroll the document above to the end to enable this checkbox.</div>}
+                <div className="gnt-field" style={{ marginTop: 16 }}><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
                 <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }}>Accept &amp; submit registration <FileSignature size={16} /></button>
               </form>
             </>
@@ -928,7 +1215,7 @@ export default function App() {
           {!authChecked ? (
             <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
           ) : !session ? (
-            <LoginGate />
+            <LoginGate onRegisterClick={resetRegFlow} />
           ) : !companyChecked ? (
             <p style={{ color: "var(--steel-soft)" }}>Loading your company…</p>
           ) : !myCompany ? (
@@ -937,6 +1224,30 @@ export default function App() {
             </div>
           ) : (
             <>
+              <div className="gnt-card" style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <h3 style={{ fontSize: 16, marginBottom: 2 }}>Account security</h3>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>Signed up before password login was added? Set one here so you can log in faster next time.</p>
+                  </div>
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowSetPassword(s => !s)}>{showSetPassword ? "Cancel" : "Set / change password"}</button>
+                </div>
+                {passwordMsg && (
+                  <div className={passwordMsg.err ? "gnt-alert-banner" : "gnt-info-banner"} style={{ marginTop: 14, marginBottom: 0 }}>
+                    {passwordMsg.err ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />} {passwordMsg.text}
+                  </div>
+                )}
+                {showSetPassword && (
+                  <form onSubmit={submitSetPassword} style={{ marginTop: 14 }}>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>New password</label><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="At least 6 characters" /></div>
+                      <div className="gnt-field"><label>Confirm new password</label><input type="password" value={confirmNewPassword} onChange={e => setConfirmNewPassword(e.target.value)} placeholder="Re-enter password" /></div>
+                    </div>
+                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={passwordSaving}>{passwordSaving ? "Saving…" : "Save password"}</button>
+                  </form>
+                )}
+              </div>
+
               <div className="gnt-card" style={{ marginBottom: 26 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
                   <div>
@@ -956,7 +1267,7 @@ export default function App() {
                     <>
                       <div><div className="dt">DMRE License</div><div className="dd">{myCompany.dmre_license}</div></div>
                       <div><div className="dt">{myCompany.type === "seller" ? "Selling" : "Buying"}</div><div className="dd">{Number(myCompany.trade_volume).toLocaleString()} ℓ @ {fmtMoney(myCompany.trade_price)}/ℓ</div></div>
-                      <div><div className="dt">Location / Terms</div><div className="dd">{myCompany.trade_location} · {myCompany.trade_terms}</div></div>
+                      <div><div className="dt">Location / Terms</div><div className="dd">{myCompany.trade_location} · {fmtTerms(myCompany.trade_terms)}</div></div>
                     </>
                   )}
                   <div><div className="dt">NCNDA</div><div className="dd">{myCompany.ncnda_signed ? `Signed by ${myCompany.ncnda_signed_by}` : "Not signed"}</div></div>
@@ -980,13 +1291,8 @@ export default function App() {
                           {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
                         </select>
                       </div>
-                      <div className="gnt-field"><label>Terms</label>
-                        <select value={listingForm.terms} onChange={e => updateListingField("terms", e.target.value)}>
-                          <option value="COC">COC — Customer Own Collection</option>
-                          <option value="COD">COD — Cash on Delivery</option>
-                          <option value="ITT">ITT — In-Tank Transfer</option>
-                          <option value="TTO">TTO — Tank Take-Over</option>
-                        </select>
+                      <div className="gnt-field"><label>Terms (select all that apply)</label>
+                        <TermsCheckboxGroup value={listingForm.terms} onChange={v => updateListingField("terms", v)} />
                       </div>
                     </div>
                     <div className="gnt-grid2">
@@ -1016,6 +1322,9 @@ export default function App() {
                           <div className="gnt-field"><label>Price</label><input type="number" min="0" step="0.01" value={editingListing.unit_price} onChange={e => updateEditField("unit_price", e.target.value)} /></div>
                         </div>
                         <div className="gnt-field"><label>Location</label><input value={editingListing.location} onChange={e => updateEditField("location", e.target.value)} /></div>
+                        <div className="gnt-field"><label>Terms (select all that apply)</label>
+                          <TermsCheckboxGroup value={editingListing.terms || []} onChange={v => updateEditField("terms", v)} />
+                        </div>
                         <div style={{ display: "flex", gap: 10 }}>
                           <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit">Save</button>
                           <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={cancelEdit}>Cancel</button>
@@ -1024,22 +1333,42 @@ export default function App() {
                     ) : (
                       <div key={l.id} className="gnt-listing" style={{ marginBottom: 10 }}>
                         <div className="gnt-listing-top">
-                          <div><div className="gnt-listing-product">{l.product}</div><div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{l.volume.toLocaleString()} ℓ · {l.terms}</div></div>
+                          <div>
+                            <div className="gnt-listing-product">
+                              {l.product}
+                              {l.status === "inactive" && <span className="gnt-badge approved" style={{ marginLeft: 8, verticalAlign: "middle" }}>Sold</span>}
+                            </div>
+                            <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{l.volume.toLocaleString()} ℓ · {fmtTerms(l.terms)}</div>
+                          </div>
                           <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>per litre</small></div>
                         </div>
                         <div className="gnt-listing-meta"><span><MapPin size={13} /> {l.location}</span><span><Clock size={13} /> {l.availability}</span></div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
-                          <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
-                        </div>
+                        {l.status === "inactive" ? (
+                          <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>Admin marked a deal on this listing as completed, so it's no longer available on the Market Board — see it under My matched deals below.</p>
+                        ) : (
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
+                            <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
+                          </div>
+                        )}
                       </div>
                     )
                   ))}
 
                   <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My matched deals</h3>
+                  {myCompany.type === "seller" && imfpaJustSigned && myCompany.imfpa_signed && (
+                    <div className="gnt-alert-banner" style={{ alignItems: "flex-start" }}>
+                      <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <div>
+                        <strong style={{ display: "block", marginBottom: 4 }}>Reminder: commission is required on completed deals</strong>
+                        If a deal concluded through Tankbridge is not paid the agreed commission, Tankbridge will publish your company's name and the reason on the public Blacklist section of the Home page.
+                        <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginLeft: 10 }} onClick={() => setImfpaJustSigned(false)}>Dismiss</button>
+                      </div>
+                    </div>
+                  )}
                   {myDeals.length === 0 && <div className="gnt-empty">No matched deals yet.</div>}
                   {myDeals.map(d => (
-                    <DealCard key={d.id} deal={d} myCompany={myCompany} />
+                    <DealCard key={d.id} deal={d} myCompany={myCompany} onReported={loadMyDeals} />
                   ))}
 
                   {myCompany.type === "seller" && myDeals.length > 0 && !myCompany.imfpa_signed && (
@@ -1059,6 +1388,8 @@ export default function App() {
                             <p>Seller agrees to pay Tankbridge a brokerage commission on the completed and paid volume of any matched transaction, confirmed in writing prior to completion.</p>
                             <h4>3. Release of buyer details</h4>
                             <p>Upon signature, Tankbridge will release the contact details of matched buyers to Seller.</p>
+                            <h4>4. Non-payment of commission</h4>
+                            <p>If a deal concluded via Tankbridge is not paid the agreed commission, Tankbridge reserves the right to publish Seller's company name and the reason on the public Blacklist section of tankbridge.co.za, in addition to any other remedies available under the NCNDA.</p>
                           </div>
                           {listingError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {listingError}</div>}
                           <form onSubmit={submitDashboardImfpa}>
@@ -1104,10 +1435,8 @@ export default function App() {
                           {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
                         </select>
                       </div>
-                      <div className="gnt-field"><label>Terms</label>
-                        <select value={referralForm.terms} onChange={e => updateReferralField("terms", e.target.value)}>
-                          {TRADE_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
+                      <div className="gnt-field"><label>Terms (select all that apply)</label>
+                        <TermsCheckboxGroup value={referralForm.terms} onChange={v => updateReferralField("terms", v)} />
                       </div>
                     </div>
                     <div className="gnt-grid2">
@@ -1147,7 +1476,7 @@ export default function App() {
                             <span className={`gnt-badge ${r.referred_type === "seller" ? "selling" : "buying"}`} style={{ marginRight: 6 }}>{r.referred_type}</span>
                             {r.referred_company_name}
                           </div>
-                          <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {r.terms} · {r.location}</div>
+                          <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {fmtTerms(r.terms)} · {r.location}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div className="gnt-badge pending">{r.commission_status}</div>
@@ -1204,7 +1533,6 @@ export default function App() {
                     <div>
                       <span className={`gnt-badge ${isSell ? "selling" : "buying"}`} style={{ marginBottom: 8 }}>{isSell ? "Selling" : "Buying"}</span>
                       <div className="gnt-listing-product">{l.product}</div>
-                      <div style={{ fontSize: 13, color: "var(--steel)" }}>{l.display_name}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>{isSell ? "asking / litre" : "bid / litre"}</small></div>
@@ -1212,7 +1540,7 @@ export default function App() {
                     </div>
                   </div>
                   <div className="gnt-listing-meta">
-                    <span className="gnt-terms-chip">{l.terms}</span>
+                    {(Array.isArray(l.terms) ? l.terms : [l.terms]).map(t => <span key={t} className="gnt-terms-chip">{t}</span>)}
                     <span><Truck size={13} /> {Number(l.volume).toLocaleString()} ℓ</span>
                     <span><MapPin size={13} /> {l.location}</span>
                     <span><Clock size={13} /> {l.availability}</span>
@@ -1231,7 +1559,7 @@ export default function App() {
           {!authChecked ? (
             <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
           ) : !session ? (
-            <div style={{ maxWidth: 420, margin: "20px auto" }}><LoginGate /></div>
+            <div style={{ maxWidth: 420, margin: "20px auto" }}><LoginGate hideRegisterLink /></div>
           ) : !isAdmin ? (
             <div className="gnt-card" style={{ textAlign: "center", maxWidth: 420, margin: "20px auto" }}>
               <Lock size={22} style={{ marginBottom: 8 }} />
@@ -1239,10 +1567,34 @@ export default function App() {
             </div>
           ) : (
             <>
+              <div className="gnt-card" style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <h3 style={{ fontSize: 16, marginBottom: 2 }}>Account security</h3>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>Set a password so you can log straight into Admin next time — no email link needed.</p>
+                  </div>
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowSetPassword(s => !s)}>{showSetPassword ? "Cancel" : "Set / change password"}</button>
+                </div>
+                {passwordMsg && (
+                  <div className={passwordMsg.err ? "gnt-alert-banner" : "gnt-info-banner"} style={{ marginTop: 14, marginBottom: 0 }}>
+                    {passwordMsg.err ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />} {passwordMsg.text}
+                  </div>
+                )}
+                {showSetPassword && (
+                  <form onSubmit={submitSetPassword} style={{ marginTop: 14 }}>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>New password</label><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="At least 6 characters" /></div>
+                      <div className="gnt-field"><label>Confirm new password</label><input type="password" value={confirmNewPassword} onChange={e => setConfirmNewPassword(e.target.value)} placeholder="Re-enter password" /></div>
+                    </div>
+                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={passwordSaving}>{passwordSaving ? "Saving…" : "Save password"}</button>
+                  </form>
+                )}
+              </div>
+
               <div className="gnt-section-head">
                 <h2>Admin</h2>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {[["pending", `Pending (${pendingCompanies.length})`], ["approved", `Approved (${approvedCompanies.length})`], ["rejected", `Rejected (${rejectedCompanies.length})`], ["deals", `Deals (${adminDeals.length})`], ["listings", `Listings (${adminListings.length})`], ["referrals", `Referrals (${adminReferrals.length})`]].map(([key, label]) => (
+                  {[["pending", `Pending (${pendingCompanies.length})`], ["approved", `Approved (${approvedCompanies.length})`], ["rejected", `Rejected (${rejectedCompanies.length})`], ["deals", `Deals (${adminDeals.length})`], ["listings", `Listings (${adminListings.length})`], ["referrals", `Referrals (${adminReferrals.length})`], ["blacklist", `Blacklist (${adminBlacklist.length})`]].map(([key, label]) => (
                     <button key={key} className={adminTab === key ? "gnt-btn gnt-btn-ink gnt-btn-sm" : "gnt-btn gnt-btn-ghost gnt-btn-sm"} onClick={() => setAdminTab(key)}>{label}</button>
                   ))}
                 </div>
@@ -1269,13 +1621,25 @@ export default function App() {
 
               {adminTab === "deals" && (
                 <table className="gnt-table">
-                  <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Platform commission (R)</th><th>Date</th></tr></thead>
+                  <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Status</th><th>Self-reported</th><th>Platform commission (R)</th><th>Date</th></tr></thead>
                   <tbody>
                     {adminDeals.map(d => (
                       <tr key={d.id}>
-                        <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {d.terms} · {d.location}</span></td>
+                        <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {fmtTerms(d.terms)} · {d.location}</span></td>
                         <td>{adminCompanies.find(c => c.id === d.seller_company_id)?.company_name}</td>
                         <td>{adminCompanies.find(c => c.id === d.buyer_company_id)?.company_name}</td>
+                        <td>
+                          <span className={`gnt-badge ${d.status === "completed" ? "approved" : d.status === "cancelled" ? "rejected" : "pending"}`}>{d.status}</span>
+                          <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                            {d.status !== "completed" && <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setDealStatus(d.id, "completed")}>Mark completed</button>}
+                            {d.status !== "cancelled" && <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setDealStatus(d.id, "cancelled")}>Cancel</button>}
+                            {d.status !== "matched" && <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setDealStatus(d.id, "matched")}>Revert</button>}
+                          </div>
+                        </td>
+                        <td style={{ fontSize: 12 }}>
+                          <div>Seller: {d.seller_reported_status ? <strong>{d.seller_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
+                          <div>Buyer: {d.buyer_reported_status ? <strong>{d.buyer_reported_status === "completed" ? "Completed" : "Fell through"}</strong> : <span style={{ color: "var(--steel-soft)" }}>—</span>}</div>
+                        </td>
                         <td>
                           <div style={{ display: "flex", gap: 6 }}>
                             <input type="number" min="0" step="0.01" style={{ width: 100, padding: "6px 8px", border: "1.5px solid var(--line)" }}
@@ -1287,7 +1651,7 @@ export default function App() {
                         <td>{fmtDate(d.created_at)}</td>
                       </tr>
                     ))}
-                    {adminDeals.length === 0 && <tr><td colSpan={5}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
+                    {adminDeals.length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
                   </tbody>
                 </table>
               )}
@@ -1299,7 +1663,7 @@ export default function App() {
                     {adminListings.map(l => (
                       <tr key={l.id}>
                         <td>{l.product}</td><td>{l.kind}</td><td>{Number(l.volume).toLocaleString()} ℓ</td>
-                        <td>{fmtMoney(l.unit_price)}</td><td>{l.terms}</td><td>{l.location}</td>
+                        <td>{fmtMoney(l.unit_price)}</td><td>{fmtTerms(l.terms)}</td><td>{l.location}</td>
                       </tr>
                     ))}
                     {adminListings.length === 0 && <tr><td colSpan={6}><div className="gnt-empty">No listings yet.</div></td></tr>}
@@ -1321,7 +1685,7 @@ export default function App() {
                         <td className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>
                           CIPC {r.referred_cipc}{r.referred_dmre_license && <><br />DMRE {r.referred_dmre_license}</>}
                         </td>
-                        <td>{r.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(r.volume).toLocaleString()} ℓ @ {fmtMoney(r.unit_price)} · {r.terms} · {r.location}</span></td>
+                        <td>{r.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(r.volume).toLocaleString()} ℓ @ {fmtMoney(r.unit_price)} · {fmtTerms(r.terms)} · {r.location}</span></td>
                         <td>
                           <span className={`gnt-badge ${r.status}`}>{r.status}</span>
                           {r.status === "pending" && (
@@ -1357,6 +1721,33 @@ export default function App() {
                     {adminReferrals.length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No referrals submitted yet.</div></td></tr>}
                   </tbody>
                 </table>
+              )}
+
+              {adminTab === "blacklist" && (
+                <>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Companies listed here appear publicly on the Home page. Use this for confirmed non-payment of commission or other serious breaches only.</p>
+                  {blacklistError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {blacklistError}</div>}
+                  <form onSubmit={addBlacklistEntry} className="gnt-card" style={{ marginBottom: 20, maxWidth: 520 }}>
+                    <div className="gnt-field"><label>Company name</label><input value={blacklistForm.companyName} onChange={e => setBlacklistForm(f => ({ ...f, companyName: e.target.value }))} /></div>
+                    <div className="gnt-field"><label>Reason (shown publicly)</label><textarea rows={2} value={blacklistForm.reason} onChange={e => setBlacklistForm(f => ({ ...f, reason: e.target.value }))} placeholder="e.g. Failed to pay agreed brokerage commission on a completed deal." /></div>
+                    <button className="gnt-btn gnt-btn-danger gnt-btn-sm" type="submit">Add to blacklist</button>
+                  </form>
+
+                  <table className="gnt-table">
+                    <thead><tr><th>Company</th><th>Reason</th><th>Date</th><th></th></tr></thead>
+                    <tbody>
+                      {adminBlacklist.map(b => (
+                        <tr key={b.id}>
+                          <td>{b.company_name}</td>
+                          <td style={{ maxWidth: 400 }}>{b.reason}</td>
+                          <td>{fmtDate(b.created_at)}</td>
+                          <td><button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => removeBlacklistEntry(b.id)}>Remove</button></td>
+                        </tr>
+                      ))}
+                      {adminBlacklist.length === 0 && <tr><td colSpan={4}><div className="gnt-empty">No companies blacklisted.</div></td></tr>}
+                    </tbody>
+                  </table>
+                </>
               )}
             </>
           )}
@@ -1413,7 +1804,7 @@ export default function App() {
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 4 }}>{acceptTarget.kind === "buy" ? "Buyer" : "Seller"} Procedure</h3>
                 <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 14 }}>
-                  {acceptTarget.product} · {Number(acceptTarget.volume).toLocaleString()} ℓ · {fmtMoney(acceptTarget.unit_price)}/ℓ · {acceptTarget.terms} · {acceptTarget.location}
+                  {acceptTarget.product} · {Number(acceptTarget.volume).toLocaleString()} ℓ · {fmtMoney(acceptTarget.unit_price)}/ℓ · {fmtTerms(acceptTarget.terms)} · {acceptTarget.location}
                 </p>
                 <div className="gnt-doc-box" style={{ maxHeight: 220 }}>
                   {acceptTarget.procedure && acceptTarget.procedure.trim()
@@ -1428,8 +1819,11 @@ export default function App() {
             ) : !session ? (
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to continue</h3>
-                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>You need to be logged in as an approved company to accept a price.</p>
-                <LoginGate />
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in to accept this price — you'll land on your Dashboard. New here? Register your company instead.</p>
+                <LoginGate
+                  onLoggedIn={() => { setAcceptTarget(null); goto("dashboard"); }}
+                  onRegisterClick={() => { setAcceptTarget(null); resetRegFlow(); }}
+                />
               </>
             ) : (
               <>
