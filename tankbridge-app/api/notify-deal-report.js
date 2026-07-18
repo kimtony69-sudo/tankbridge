@@ -15,7 +15,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { dealId, role, outcome } = req.body || {};
+    const { dealId, role, outcome, reason } = req.body || {};
     if (!dealId || !role || !outcome) return res.status(400).json({ error: "Missing dealId, role, or outcome" });
     if (outcome === "in_progress") return res.status(200).json({ ok: true, skipped: true }); // no email needed for a routine "still going" ping
 
@@ -47,6 +47,7 @@ export default async function handler(req, res) {
     const html = `
       <h2>${reporterName} (${role}) reported an outcome</h2>
       <p><strong>Report:</strong> ${outcomeLabel}</p>
+      ${reason ? `<p><strong>Reason given:</strong> ${reason}</p>` : ""}
       <p><strong>Product:</strong> ${deal.product}</p>
       <p><strong>Volume:</strong> ${Number(deal.volume).toLocaleString()} litres</p>
       <p><strong>Price:</strong> R ${Number(deal.unit_price).toFixed(2)} / litre</p>
