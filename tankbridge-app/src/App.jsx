@@ -334,6 +334,11 @@ export default function App() {
   const [editingListing, setEditingListing] = useState(null);
   const [editError, setEditError] = useState("");
   const [showImfpaForm, setShowImfpaForm] = useState(false);
+  const [showSetPassword, setShowSetPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordMsg, setPasswordMsg] = useState(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
 
@@ -616,6 +621,20 @@ export default function App() {
   }
 
   // ---------- IMFPA (dashboard, sellers) ----------
+  async function submitSetPassword(e) {
+    e.preventDefault();
+    if (newPassword.length < 6) { setPasswordMsg({ text: "Password must be at least 6 characters.", err: true }); return; }
+    if (newPassword !== confirmNewPassword) { setPasswordMsg({ text: "Passwords do not match.", err: true }); return; }
+    setPasswordSaving(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setPasswordSaving(false);
+    if (error) { setPasswordMsg({ text: error.message, err: true }); return; }
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setPasswordMsg({ text: "Password set — use it to log in next time.", err: false });
+    setShowSetPassword(false);
+  }
+
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
@@ -1087,6 +1106,30 @@ export default function App() {
             </div>
           ) : (
             <>
+              <div className="gnt-card" style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <h3 style={{ fontSize: 16, marginBottom: 2 }}>Account security</h3>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>Signed up before password login was added? Set one here so you can log in faster next time.</p>
+                  </div>
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowSetPassword(s => !s)}>{showSetPassword ? "Cancel" : "Set / change password"}</button>
+                </div>
+                {passwordMsg && (
+                  <div className={passwordMsg.err ? "gnt-alert-banner" : "gnt-info-banner"} style={{ marginTop: 14, marginBottom: 0 }}>
+                    {passwordMsg.err ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />} {passwordMsg.text}
+                  </div>
+                )}
+                {showSetPassword && (
+                  <form onSubmit={submitSetPassword} style={{ marginTop: 14 }}>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>New password</label><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="At least 6 characters" /></div>
+                      <div className="gnt-field"><label>Confirm new password</label><input type="password" value={confirmNewPassword} onChange={e => setConfirmNewPassword(e.target.value)} placeholder="Re-enter password" /></div>
+                    </div>
+                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={passwordSaving}>{passwordSaving ? "Saving…" : "Save password"}</button>
+                  </form>
+                )}
+              </div>
+
               <div className="gnt-card" style={{ marginBottom: 26 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
                   <div>
