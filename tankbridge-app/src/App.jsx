@@ -464,6 +464,7 @@ export default function App() {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
+  const [imfpaCommissionRate, setImfpaCommissionRate] = useState("0.10");
 
   const [marketFilter, setMarketFilter] = useState({ kind: "all", product: "all", terms: "all" });
   const [acceptTarget, setAcceptTarget] = useState(null);
@@ -803,16 +804,19 @@ export default function App() {
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
+    const rate = Number(imfpaCommissionRate);
+    if (isNaN(rate) || rate < 0.10 || rate > 0.99) { setListingError("Commission must be between R0.10 and R0.99 per litre."); return; }
     setListingError("");
-    const { error } = await supabase.rpc("sign_imfpa", { p_signed_by: imfpaName });
+    const { error } = await supabase.rpc("sign_imfpa", { p_signed_by: imfpaName, p_commission_rate: rate });
     if (error) { setListingError(error.message); return; }
     const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
     setMyCompany(co);
     setShowImfpaForm(false);
     setImfpaAgree(false);
     setImfpaName("");
+    setImfpaCommissionRate("0.10");
     setImfpaJustSigned(true);
-    showToast("IMFPA signed — buyer contact details on matched deals are now released.");
+    showToast(`IMFPA signed at R${rate.toFixed(2)}/litre — buyer contact details on matched deals are now released.`);
   }
 
   // ---------- REFERRALS (broker) ----------
@@ -1537,25 +1541,47 @@ export default function App() {
                     <DealCard key={d.id} deal={d} myCompany={myCompany} onReported={loadMyDeals} />
                   ))}
 
-                  {myCompany.type === "seller" && myDeals.length > 0 && !myCompany.imfpa_signed && (
+                  {myCompany.type === "seller" && myDeals.filter(d => d.status !== "cancelled").length > 0 && !myCompany.imfpa_signed && (
                     <div style={{ marginTop: 14 }}>
                       {!showImfpaForm ? (
                         <div className="gnt-alert-banner" style={{ alignItems: "center", justifyContent: "space-between" }}>
-                          <span><Lock size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />You have {myDeals.length} matched deal(s). Sign the IMFPA to release buyer contact details.</span>
+                          <span><Lock size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />You have {myDeals.filter(d => d.status !== "cancelled").length} matched deal(s). Sign the IMFPA to release buyer contact details.</span>
                           <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setShowImfpaForm(true)}>Sign IMFPA</button>
                         </div>
                       ) : (
                         <div className="gnt-card">
-                          <h3 style={{ fontSize: 20, marginBottom: 10 }}>IMFPA — Brokerage Commission Agreement</h3>
+                          <h3 style={{ fontSize: 20, marginBottom: 10 }}>IMFPA — Irrevocable Master Fee Protection Agreement</h3>
+                          <div className="gnt-field" style={{ maxWidth: 280 }}>
+                            <label>Commission (R / litre)</label>
+                            <input type="number" min="0.10" max="0.99" step="0.01" value={imfpaCommissionRate} onChange={e => setImfpaCommissionRate(e.target.value)} />
+                            <div className="hint">Default R0.10/ℓ — you can set any rate between R0.10 and R0.99/ℓ.</div>
+                          </div>
                           <div className="gnt-doc-box">
-                            <h4>1. Parties</h4>
-                            <p>This Agreement is entered into between <strong>{myCompany.company_name}</strong> ("Seller") and Tankbridge, in respect of bulk diesel transactions matched via the Market Board.</p>
+                            <h4>1. Parties and purpose</h4>
+                            <p>This Irrevocable Master Fee Protection Agreement ("Agreement") is entered into between <strong>{myCompany.company_name}</strong> ("Seller") and Tankbridge, acting as intermediary/broker ("Intermediary"), in respect of all bulk diesel transactions matched via the Tankbridge Market Board.</p>
+
                             <h4>2. Commission</h4>
-                            <p>Seller agrees to pay Tankbridge a brokerage commission on the completed and paid volume of any matched transaction, confirmed in writing prior to completion.</p>
-                            <h4>3. Release of buyer details</h4>
-                            <p>Upon signature, Tankbridge will release the contact details of matched buyers to Seller.</p>
-                            <h4>4. Non-payment of commission</h4>
-                            <p>If a deal concluded via Tankbridge is not paid the agreed commission, Tankbridge reserves the right to publish Seller's company name and the reason on the public Blacklist section of tankbridge.co.za, in addition to any other remedies available under the NCNDA.</p>
+                            <p>Seller irrevocably agrees to pay Intermediary a brokerage commission of <strong>R{(Number(imfpaCommissionRate) || 0).toFixed(2)} per litre</strong> on the completed and paid volume of any transaction concluded with a buyer introduced via Tankbridge. This rate applies to all deals matched under this Agreement unless a different rate is confirmed in writing between Seller and Tankbridge admin prior to release of buyer contact details on a specific deal.</p>
+
+                            <h4>3. Invoicing and payment terms</h4>
+                            <p>Upon confirmation that a matched deal has been completed, Tankbridge will issue a commission invoice to Seller for the agreed rate multiplied by the completed volume. Seller agrees to settle this invoice within 7 days of issue. Amounts unpaid after this period accrue interest at 2% per month (or part thereof) until paid in full.</p>
+
+                            <h4>4. Release of buyer details</h4>
+                            <p>Upon signature of this Agreement, Tankbridge will release the contact details of matched buyers to Seller for the sole purpose of concluding the introduced transaction(s).</p>
+
+                            <h4>5. Confidentiality</h4>
+                            <p>Seller shall keep all buyer information received via Tankbridge confidential and shall not use it for any purpose other than concluding the introduced transaction, in line with the NCNDA signed at registration.</p>
+
+                            <h4>6. Non-payment of commission</h4>
+                            <p>If a deal concluded via Tankbridge is not paid the agreed commission, Tankbridge reserves the right, without further notice, to: (a) publish Seller's company name and the reason on the public Blacklist section of tankbridge.co.za; (b) recover the outstanding amount plus accrued interest; and (c) recover all legal costs incurred in enforcing this Agreement, calculated on an attorney-and-own-client scale. These remedies are in addition to, and do not limit, any other remedies available to Tankbridge under the NCNDA.</p>
+
+                            <h4>7. No advance fees</h4>
+                            <p>No upfront, advance, or "verification" fee is payable by Seller under this Agreement. Commission is due only on completed, paid deliveries, as invoiced under Section 3.</p>
+
+                            <h4>8. Governing law and jurisdiction</h4>
+                            <p>This Agreement is governed by the laws of the Republic of South Africa. Both parties consent to the non-exclusive jurisdiction of the High Court of South Africa.</p>
+
+                            <div className="gnt-sig-line">This is a standard template provided for demonstration purposes. Tankbridge recommends independent legal review before commercial use.</div>
                           </div>
                           {listingError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {listingError}</div>}
                           <form onSubmit={submitDashboardImfpa}>
@@ -1566,7 +1592,7 @@ export default function App() {
                             <div className="gnt-field"><label>Type your full legal name to sign</label><input value={imfpaName} onChange={e => setImfpaName(e.target.value)} /></div>
                             <div style={{ display: "flex", gap: 10 }}>
                               <button className="gnt-btn gnt-btn-amber" type="submit">Sign &amp; release buyer details</button>
-                              <button className="gnt-btn gnt-btn-ghost" type="button" onClick={() => setShowImfpaForm(false)}>Cancel</button>
+                              <button className="gnt-btn gnt-btn-ghost" type="button" onClick={() => { setShowImfpaForm(false); setImfpaCommissionRate("0.10"); }}>Cancel</button>
                             </div>
                           </form>
                         </div>
