@@ -24,6 +24,7 @@ function fmtMoney(n) {
 
 const EMPTY_REG = {
   companyName: "", cipc: "", dmreLicense: "", address: "", contactName: "", phone: "", email: "",
+  password: "", confirmPassword: "",
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: TRADE_TERMS[0],
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
@@ -193,26 +194,34 @@ const STYLE = `
 }
 `;
 
-function LoginGate({ onSent }) {
+function LoginGate({ onLoggedIn, onRegisterClick, hideRegisterLink }) {
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [magicSent, setMagicSent] = useState(false);
 
-  async function send(e) {
+  async function submitLogin(e) {
     e.preventDefault();
     setErr("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    });
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
     if (error) { setErr(error.message); return; }
-    setSent(true);
-    if (onSent) onSent(email);
+    if (onLoggedIn) onLoggedIn();
   }
 
-  if (sent) {
+  async function sendMagicLink() {
+    if (!email) { setErr("Enter your email above first."); return; }
+    setErr("");
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    if (error) { setErr(error.message); return; }
+    setMagicSent(true);
+  }
+
+  if (magicSent) {
     return (
-      <div className="gnt-card" style={{ textAlign: "center", padding: 28 }}>
+      <div className="gnt-card" style={{ textAlign: "center", padding: 28, maxWidth: 420 }}>
         <Mail size={26} style={{ marginBottom: 10 }} />
         <p style={{ fontSize: 14 }}>We've sent a login link to {email}. Check your inbox and click the link — keep this tab open.</p>
       </div>
@@ -220,13 +229,23 @@ function LoginGate({ onSent }) {
   }
 
   return (
-    <form onSubmit={send} className="gnt-card" style={{ maxWidth: 420 }}>
-      <h3 style={{ fontSize: 18, marginBottom: 10 }}>Sign in / Register with email</h3>
-      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>No password needed. Click the link we email you and you're signed in.</p>
+    <div className="gnt-card" style={{ maxWidth: 420 }}>
+      <h3 style={{ fontSize: 18, marginBottom: 10 }}>Log in</h3>
+      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Already registered? Enter your email and password.</p>
       {err && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {err}</div>}
-      <div className="gnt-field"><label>Email</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.co.za" /></div>
-      <button className="gnt-btn gnt-btn-ink" type="submit"><LogIn size={15} /> Send login link</button>
-    </form>
+      <form onSubmit={submitLogin}>
+        <div className="gnt-field"><label>Email</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.co.za" /></div>
+        <div className="gnt-field"><label>Password</label><input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" /></div>
+        <button className="gnt-btn gnt-btn-ink" type="submit" disabled={loading}><LogIn size={15} /> {loading ? "Logging in…" : "Log in"}</button>
+      </form>
+      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 10 }} type="button" onClick={sendMagicLink}>Forgot your password? Email me a login link</button>
+      {!hideRegisterLink && (
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+          <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>New company — not registered yet?</p>
+          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="button" onClick={onRegisterClick}>Register now</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -303,7 +322,7 @@ export default function App() {
   const [referralName, setReferralName] = useState("");
 
   const [regType, setRegType] = useState("seller");
-  const [regStep, setRegStep] = useState("form"); // form -> login -> ncnda -> done
+  const [regStep, setRegStep] = useState("form"); // form -> confirm-email (only if email confirmation required) -> ncnda -> done
   const [regForm, setRegForm] = useState(EMPTY_REG);
   const [ncndaAgree, setNcndaAgree] = useState(false);
   const [ncndaName, setNcndaName] = useState("");
@@ -346,7 +365,7 @@ export default function App() {
       setCompanyChecked(true);
       const { data: adminFlag } = await supabase.rpc("is_admin");
       setIsAdmin(!!adminFlag);
-      if (regStep === "login") setRegStep("ncnda");
+      if (regStep === "login" || regStep === "confirm-email") setRegStep("ncnda");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
@@ -408,6 +427,11 @@ export default function App() {
     }
     if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
 
+    if (!session) {
+      if (!regForm.password || regForm.password.length < 6) return "Please choose a password of at least 6 characters.";
+      if (regForm.password !== regForm.confirmPassword) return "Passwords do not match.";
+    }
+
     if (regType === "broker") {
       if (!regForm.referredCompanyName || !regForm.referredCipc) return "Please enter the referred company's name and CIPC number.";
       if (regForm.referredType === "seller" && !regForm.referredDmreLicense) return "DMRE wholesale license is required when referring a seller.";
@@ -424,13 +448,32 @@ export default function App() {
     return "";
   }
 
-  function submitRegForm(e) {
+  async function submitRegForm(e) {
     e.preventDefault();
     const err = validateRegForm();
     if (err) { setRegError(err); return; }
     setRegError("");
     setNcndaScrolledEnd(false);
-    setRegStep(session ? "ncnda" : "login");
+
+    if (session) {
+      // already logged in (e.g. came back mid-flow) — just continue
+      setRegStep("ncnda");
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: regForm.email,
+      password: regForm.password,
+    });
+    if (error) { setRegError(error.message); return; }
+
+    if (data.session) {
+      setRegStep("ncnda");
+    } else {
+      // Supabase project has "Confirm email" turned on — user must click the
+      // confirmation link before they have a session.
+      setRegStep("confirm-email");
+    }
   }
 
   function handleNcndaScroll(e) {
@@ -872,8 +915,14 @@ export default function App() {
                   <div className="gnt-field"><label>Phone</label><input value={regForm.phone} onChange={e => updateReg("phone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
                 </div>
                 <div className="gnt-field"><label>Email</label><input type="email" value={regForm.email} onChange={e => updateReg("email", e.target.value)} placeholder="you@company.co.za" />
-                  <div className="hint">Use the same email you'll log in with.</div>
+                  <div className="hint">This is also your login email.</div>
                 </div>
+                {!session && (
+                  <div className="gnt-grid2">
+                    <div className="gnt-field"><label>Choose a password</label><input type="password" value={regForm.password} onChange={e => updateReg("password", e.target.value)} placeholder="At least 6 characters" /></div>
+                    <div className="gnt-field"><label>Confirm password</label><input type="password" value={regForm.confirmPassword} onChange={e => updateReg("confirmPassword", e.target.value)} placeholder="Re-enter password" /></div>
+                  </div>
+                )}
 
                 {regType === "broker" ? (
                   <>
@@ -949,12 +998,12 @@ export default function App() {
             </>
           )}
 
-          {regStep === "login" && (
+          {regStep === "confirm-email" && (
             <>
               <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setRegStep("form")} style={{ marginBottom: 18 }}><ArrowLeft size={14} /> Back</button>
-              <h2 style={{ fontSize: 28, marginBottom: 10 }}>One more step — confirm it's you</h2>
-              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>We need to confirm your email before submitting the registration. Once you click the link in your inbox, come back to this tab.</p>
-              <LoginGate />
+              <h2 style={{ fontSize: 28, marginBottom: 10 }}>Confirm your email</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>We've sent a confirmation link to <strong>{regForm.email}</strong>. Click it, then log in below with the password you just chose to continue your registration.</p>
+              <LoginGate hideRegisterLink />
             </>
           )}
 
@@ -1029,7 +1078,7 @@ export default function App() {
           {!authChecked ? (
             <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
           ) : !session ? (
-            <LoginGate />
+            <LoginGate onRegisterClick={resetRegFlow} />
           ) : !companyChecked ? (
             <p style={{ color: "var(--steel-soft)" }}>Loading your company…</p>
           ) : !myCompany ? (
@@ -1332,7 +1381,7 @@ export default function App() {
           {!authChecked ? (
             <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
           ) : !session ? (
-            <div style={{ maxWidth: 420, margin: "20px auto" }}><LoginGate /></div>
+            <div style={{ maxWidth: 420, margin: "20px auto" }}><LoginGate hideRegisterLink /></div>
           ) : !isAdmin ? (
             <div className="gnt-card" style={{ textAlign: "center", maxWidth: 420, margin: "20px auto" }}>
               <Lock size={22} style={{ marginBottom: 8 }} />
@@ -1529,8 +1578,11 @@ export default function App() {
             ) : !session ? (
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to continue</h3>
-                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>You need to be logged in as an approved company to accept a price.</p>
-                <LoginGate />
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in to accept this price — you'll land on your Dashboard. New here? Register your company instead.</p>
+                <LoginGate
+                  onLoggedIn={() => { setAcceptTarget(null); goto("dashboard"); }}
+                  onRegisterClick={() => { setAcceptTarget(null); resetRegFlow(); }}
+                />
               </>
             ) : (
               <>
