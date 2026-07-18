@@ -435,6 +435,7 @@ export default function App() {
   const [linkDealChoice, setLinkDealChoice] = useState("");
   const [commissionEdits, setCommissionEdits] = useState({}); // dealId -> input value
   const [showCancelledDeals, setShowCancelledDeals] = useState(false);
+  const [showInactiveListings, setShowInactiveListings] = useState(false);
 
   const [myReferrals, setMyReferrals] = useState([]);
   const [referralForm, setReferralForm] = useState(EMPTY_REFERRAL);
@@ -1818,18 +1819,26 @@ export default function App() {
               )}
 
               {adminTab === "listings" && (
-                <table className="gnt-table">
-                  <thead><tr><th>Product</th><th>Kind</th><th>Volume</th><th>Price/ℓ</th><th>Terms</th><th>Location</th></tr></thead>
-                  <tbody>
-                    {adminListings.map(l => (
-                      <tr key={l.id}>
-                        <td>{l.product}</td><td>{l.kind}</td><td>{Number(l.volume).toLocaleString()} ℓ</td>
-                        <td>{fmtMoney(l.unit_price)}</td><td>{fmtTerms(l.terms)}</td><td>{l.location}</td>
-                      </tr>
-                    ))}
-                    {adminListings.length === 0 && <tr><td colSpan={6}><div className="gnt-empty">No listings yet.</div></td></tr>}
-                  </tbody>
-                </table>
+                <>
+                  {adminListings.some(l => l.status !== "active") && (
+                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginBottom: 10 }} onClick={() => setShowInactiveListings(s => !s)}>
+                      {showInactiveListings ? "Hide" : "Show"} {adminListings.filter(l => l.status !== "active").length} inactive listing(s)
+                    </button>
+                  )}
+                  <table className="gnt-table">
+                    <thead><tr><th>Product</th><th>Kind</th><th>Volume</th><th>Price/ℓ</th><th>Terms</th><th>Location</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {adminListings.filter(l => showInactiveListings || l.status === "active").map(l => (
+                        <tr key={l.id}>
+                          <td>{l.product}</td><td>{l.kind}</td><td>{Number(l.volume).toLocaleString()} ℓ</td>
+                          <td>{fmtMoney(l.unit_price)}</td><td>{fmtTerms(l.terms)}</td><td>{l.location}</td>
+                          <td><span className={`gnt-badge ${l.status === "active" ? "approved" : "rejected"}`}>{l.status}</span></td>
+                        </tr>
+                      ))}
+                      {adminListings.filter(l => showInactiveListings || l.status === "active").length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No listings yet.</div></td></tr>}
+                    </tbody>
+                  </table>
+                </>
               )}
 
               {adminTab === "referrals" && (
