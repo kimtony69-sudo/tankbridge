@@ -300,7 +300,14 @@ function DealCard({ deal, myCompany, onReported }) {
     setReporting(true);
     const { error } = await supabase.rpc("report_deal_outcome", { p_deal_id: deal.id, p_outcome: outcome });
     setReporting(false);
-    if (!error && onReported) onReported();
+    if (!error) {
+      fetch("/api/notify-deal-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId: deal.id, role: isSellerViewing ? "seller" : "buyer", outcome }),
+      }).catch(() => {}); // best-effort — don't block the UI if the email fails
+      if (onReported) onReported();
+    }
   }
 
   return (
@@ -347,7 +354,21 @@ function DealCard({ deal, myCompany, onReported }) {
 }
 
 export default function App() {
-  const [view, setView] = useState("landing");
+  const checkinParams = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("checkin") === "1" && p.get("deal") && p.get("token")) {
+        return { dealId: p.get("deal"), token: p.get("token"), role: p.get("role") || "", outcome: p.get("outcome") || "" };
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+
+  const [view, setView] = useState(checkinParams ? "checkin" : "landing");
+  const [checkinResult, setCheckinResult] = useState(null);
+  const [checkinChoice, setCheckinChoice] = useState(checkinParams?.outcome || "");
+  const [checkinSubmitting, setCheckinSubmitting] = useState(false);
+  const [checkinError, setCheckinError] = useState("");
   const [session, setSession] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [myCompany, setMyCompany] = useState(null);
@@ -433,6 +454,25 @@ export default function App() {
   }, [session]);
 
   async function signOut() { await supabase.auth.signOut(); goto("landing"); }
+
+  async function submitCheckin(outcome) {
+    if (!checkinParams) return;
+    setCheckinSubmitting(true);
+    setCheckinError("");
+    try {
+      const res = await fetch("/api/confirm-checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId: checkinParams.dealId, token: checkinParams.token, outcome }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setCheckinError(data.error || "Something went wrong."); setCheckinSubmitting(false); return; }
+      setCheckinResult(data);
+    } catch (e) {
+      setCheckinError("Could not reach the server. Please try again.");
+    }
+    setCheckinSubmitting(false);
+  }
 
   // ---------- MARKET BOARD ----------
   const loadMarketBoard = useCallback(async () => {
@@ -902,6 +942,50 @@ export default function App() {
       {toast && (
         <div style={{ position: "fixed", top: 76, right: 20, zIndex: 200, background: toast.kind === "err" ? "#a63b32" : "#101b28", color: "#ece8de", padding: "12px 18px", fontSize: 13.5, maxWidth: 320, boxShadow: "0 6px 18px rgba(0,0,0,0.25)" }}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* ===================== CHECK-IN (public, no login) ===================== */}
+      {view === "checkin" && (
+        <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 520, margin: "0 auto" }}>
+          {checkinResult ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
+              {checkinChoice === "completed" ? (
+                <>
+                  <h2 style={{ fontSize: 26, marginBottom: 10 }}>Congratulations on the completed deal!</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Thanks for letting Tankbridge know.</p>
+                  {checkinResult.role === "seller" && (
+                    <div className="gnt-info-banner" style={{ textAlign: "left", marginTop: 18 }}>
+                      <FileSignature size={16} /> As agreed in your IMFPA, please issue Tankbridge's brokerage commission invoice for this deal. Admin has been notified and will be in touch about payment details.
+                    </div>
+                  )}
+                </>
+              ) : checkinChoice === "fell_through" ? (
+                <>
+                  <h2 style={{ fontSize: 24, marginBottom: 10 }}>Thanks for letting us know</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Sorry this one didn't go through. Tankbridge admin has been notified. You can browse the Market Board any time for other opportunities.</p>
+                </>
+              ) : (
+                <>
+                  <h2 style={{ fontSize: 24, marginBottom: 10 }}>Thanks — noted as still in progress</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>We'll check in again in a week.</p>
+                </>
+              )}
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 20 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : (
+            <div className="gnt-card" style={{ padding: "32px 28px" }}>
+              <h2 style={{ fontSize: 24, marginBottom: 10 }}>How's your deal going?</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 20 }}>Let Tankbridge know the current status — no login needed.</p>
+              {checkinError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {checkinError}</div>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button className="gnt-btn gnt-btn-amber" disabled={checkinSubmitting} onClick={() => { setCheckinChoice("completed"); submitCheckin("completed"); }}>Deal completed</button>
+                <button className="gnt-btn gnt-btn-ink" disabled={checkinSubmitting} onClick={() => { setCheckinChoice("in_progress"); submitCheckin("in_progress"); }}>Still in progress</button>
+                <button className="gnt-btn gnt-btn-danger" disabled={checkinSubmitting} onClick={() => { setCheckinChoice("fell_through"); submitCheckin("fell_through"); }}>Deal fell through</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
