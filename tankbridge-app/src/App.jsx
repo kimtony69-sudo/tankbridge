@@ -10,9 +10,9 @@ import { supabase } from "./supabaseClient";
 const PRODUCTS = ["Diesel 50ppm", "Diesel 10ppm (ULSD)", "Illuminating Paraffin", "Petrol ULP93", "Petrol ULP95"];
 const LOCATIONS = ["Durban", "Lesedi", "Secunda", "Sasolburg", "Johannesburg", "Cape Town", "Richards Bay", "Other"];
 const OWNERSHIP_LABELS = {
-  title_holder: "Title Holder",
+  title_holder: "Title Holder · POP",
   mandate_holder: "Mandate / Allocation Holder",
-  direct_funds: "Direct Funds",
+  direct_funds: "Own Funds · POF",
   funder_involved: "Funder Involved",
 };
 
@@ -1512,8 +1512,8 @@ export default function App() {
           </section>
 
           <section style={{ padding: "8px 0 40px" }}>
-            <h3 style={{ fontSize: 20, marginBottom: 6 }}>Non-payment blacklist</h3>
-            <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Companies that conclude a deal via Tankbridge and refuse to pay the agreed commission are published here with the reason.</p>
+            <h3 style={{ fontSize: 30, marginBottom: 8, color: "var(--alert)" }}>Blacklist</h3>
+            <p style={{ fontSize: 13.5, color: "var(--steel-soft)", marginBottom: 14 }}>Companies published here have breached their obligations to Tankbridge or a counterparty — non-payment of commission, fraudulent listings, circumvention, or other serious breaches — with the reason stated.</p>
             {publicBlacklist.length === 0 ? (
               <div className="gnt-empty" style={{ padding: "24px 20px" }}>No companies currently blacklisted.</div>
             ) : (
@@ -1627,12 +1627,12 @@ export default function App() {
                         <option value="">Select…</option>
                         {regType === "seller" ? (
                           <>
-                            <option value="title_holder">I am the Title Holder</option>
+                            <option value="title_holder">I am the Title Holder with Proof of Product</option>
                             <option value="mandate_holder">I hold a Mandate / Allocation from the Title Holder</option>
                           </>
                         ) : (
                           <>
-                            <option value="direct_funds">I'm funding this directly</option>
+                            <option value="direct_funds">I have own funds with POF</option>
                             <option value="funder_involved">A Funder / financier is involved</option>
                           </>
                         )}
