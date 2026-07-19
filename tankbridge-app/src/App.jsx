@@ -9,6 +9,13 @@ import { supabase } from "./supabaseClient";
 
 const PRODUCTS = ["Diesel 50ppm", "Diesel 10ppm (ULSD)", "Illuminating Paraffin", "Petrol ULP93", "Petrol ULP95"];
 const LOCATIONS = ["Durban", "Lesedi", "Secunda", "Sasolburg", "Johannesburg", "Cape Town", "Richards Bay", "Other"];
+const OWNERSHIP_LABELS = {
+  title_holder: "Title Holder",
+  mandate_holder: "Mandate / Allocation Holder",
+  direct_funds: "Direct Funds",
+  funder_involved: "Funder Involved",
+};
+
 const TRADE_TERMS = ["COC", "COD", "ITT", "TTO"];
 const BUYER_FELL_THROUGH_REASONS = [
   "Could not verify Proof of Product",
@@ -40,7 +47,7 @@ function fmtTerms(t) {
 
 const EMPTY_REG = {
   companyName: "", cipc: "", dmreLicense: "", address: "", contactName: "", phone: "", email: "",
-  password: "", confirmPassword: "",
+  password: "", confirmPassword: "", ownershipCapacity: "",
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "",
@@ -491,6 +498,11 @@ export default function App() {
   const [profileForm, setProfileForm] = useState({ contactName: "", phone: "", address: "" });
   const [profileError, setProfileError] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [myDocuments, setMyDocuments] = useState([]);
+  const [docUploading, setDocUploading] = useState(false);
+  const [docError, setDocError] = useState("");
+  const [refForm, setRefForm] = useState({ ref1Company: "", ref1Contact: "", ref2Company: "", ref2Contact: "" });
+  const [refSaving, setRefSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
   const [imfpaCommissionRate, setImfpaCommissionRate] = useState("0.10");
@@ -503,6 +515,7 @@ export default function App() {
 
   const [adminTab, setAdminTab] = useState("pending");
   const [detailCompany, setDetailCompany] = useState(null);
+  const [detailDocuments, setDetailDocuments] = useState([]);
 
   const showToast = (msg, kind = "ok") => { setToast({ msg, kind }); setTimeout(() => setToast(null), 3500); };
   function goto(v) { setView(v); setMobileMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }
@@ -655,7 +668,19 @@ export default function App() {
     setMyReferrals(data || []);
   }, [myCompany]);
 
-  useEffect(() => { loadMyListings(); loadMyDeals(); loadMyReferrals(); }, [loadMyListings, loadMyDeals, loadMyReferrals]);
+  const loadMyDocuments = useCallback(async () => {
+    if (!myCompany) return;
+    const { data } = await supabase.from("company_documents").select("*").eq("company_id", myCompany.id).order("uploaded_at", { ascending: false });
+    setMyDocuments(data || []);
+  }, [myCompany]);
+
+  useEffect(() => {
+    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments();
+    if (myCompany) setRefForm({
+      ref1Company: myCompany.trade_ref_1_company || "", ref1Contact: myCompany.trade_ref_1_contact || "",
+      ref2Company: myCompany.trade_ref_2_company || "", ref2Contact: myCompany.trade_ref_2_contact || "",
+    });
+  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, myCompany]);
 
   // ---------- ADMIN DATA ----------
   const loadAdminData = useCallback(async () => {
@@ -705,6 +730,7 @@ export default function App() {
     }
 
     if (regType === "seller" && !regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
+    if (!regForm.ownershipCapacity) return regType === "seller" ? "Please indicate whether you're the Title Holder or a Mandate/Allocation holder." : "Please indicate whether you're funding this directly or via a Funder.";
     if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price you want to trade.";
     if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
     if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
@@ -756,6 +782,7 @@ export default function App() {
       company_name: regForm.companyName,
       cipc: regForm.cipc || null,
       dmre_license: regType === "seller" ? regForm.dmreLicense : null,
+      ownership_capacity: regType === "broker" ? null : regForm.ownershipCapacity,
       address: regForm.address || null,
       contact_name: regForm.contactName,
       phone: regForm.phone,
@@ -922,6 +949,43 @@ export default function App() {
     showToast("Company details updated.");
   }
 
+  async function uploadCompanyDoc(files, docType) {
+    if (!files || files.length === 0 || !myCompany) return;
+    setDocUploading(true);
+    setDocError("");
+    for (const file of files) {
+      const path = `${session.user.id}/${docType}/${Date.now()}-${file.name}`;
+      const { error: upErr } = await supabase.storage.from("company-docs").upload(path, file);
+      if (upErr) { setDocError(upErr.message); continue; }
+      await supabase.from("company_documents").insert({ company_id: myCompany.id, doc_type: docType, file_path: path, file_name: file.name });
+    }
+    setDocUploading(false);
+    await loadMyDocuments();
+    showToast("Document(s) uploaded — admin will review them.");
+  }
+
+  async function deleteCompanyDoc(doc) {
+    await supabase.storage.from("company-docs").remove([doc.file_path]);
+    await supabase.from("company_documents").delete().eq("id", doc.id);
+    await loadMyDocuments();
+  }
+
+  async function submitTradeReferences(e) {
+    e.preventDefault();
+    setRefSaving(true);
+    const { error } = await supabase.from("companies").update({
+      trade_ref_1_company: refForm.ref1Company || null,
+      trade_ref_1_contact: refForm.ref1Contact || null,
+      trade_ref_2_company: refForm.ref2Company || null,
+      trade_ref_2_contact: refForm.ref2Contact || null,
+    }).eq("user_id", session.user.id);
+    setRefSaving(false);
+    if (error) { showToast(error.message, "err"); return; }
+    const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
+    setMyCompany(co);
+    showToast("Trade references saved — admin will review them.");
+  }
+
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
@@ -1036,6 +1100,33 @@ export default function App() {
     setDetailCompany(null);
     await loadAdminData();
     showToast(`${c.company_name} was ${status === "approved" ? "approved" : "rejected"} — they've been notified by email.`);
+  }
+
+  async function loadDetailDocuments(companyId) {
+    const { data } = await supabase.from("company_documents").select("*").eq("company_id", companyId).order("uploaded_at", { ascending: false });
+    setDetailDocuments(data || []);
+  }
+
+  async function viewCompanyDoc(doc) {
+    const { data, error } = await supabase.storage.from("company-docs").createSignedUrl(doc.file_path, 300);
+    if (error) { showToast(error.message, "err"); return; }
+    window.open(data.signedUrl, "_blank");
+  }
+
+  async function togglePastPerformanceVerified(company) {
+    const { error } = await supabase.rpc("set_past_performance_verified", { p_company_id: company.id, p_verified: !company.past_performance_verified });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    setDetailCompany(c => c && ({ ...c, past_performance_verified: !company.past_performance_verified }));
+    showToast(`Past Performance badge ${!company.past_performance_verified ? "granted" : "revoked"}.`);
+  }
+
+  async function toggleMandateVerified(company) {
+    const { error } = await supabase.rpc("set_mandate_verified", { p_company_id: company.id, p_verified: !company.mandate_verified });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    setDetailCompany(c => c && ({ ...c, mandate_verified: !company.mandate_verified }));
+    showToast(`Mandate Verified badge ${!company.mandate_verified ? "granted" : "revoked"}.`);
   }
 
   function updateCommissionInput(dealId, value) { setCommissionEdits(f => ({ ...f, [dealId]: value })); }
@@ -1530,6 +1621,26 @@ export default function App() {
                   </>
                 ) : (
                   <>
+                    <div className="gnt-field">
+                      <label>{regType === "seller" ? "Are you the Title Holder, or do you hold a Mandate/Allocation?" : "Are you funding this directly, or is a Funder involved?"}</label>
+                      <select value={regForm.ownershipCapacity} onChange={e => updateReg("ownershipCapacity", e.target.value)}>
+                        <option value="">Select…</option>
+                        {regType === "seller" ? (
+                          <>
+                            <option value="title_holder">I am the Title Holder</option>
+                            <option value="mandate_holder">I hold a Mandate / Allocation from the Title Holder</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="direct_funds">I'm funding this directly</option>
+                            <option value="funder_involved">A Funder / financier is involved</option>
+                          </>
+                        )}
+                      </select>
+                      {regForm.ownershipCapacity === "mandate_holder" && (
+                        <div className="hint">This is shown as a label on the Market Board (no names). You'll be able to upload proof of your mandate privately to admin from your Dashboard — it's never shown to buyers.</div>
+                      )}
+                    </div>
                     <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>{regType === "seller" ? "What are you looking to sell?" : "What are you looking to buy?"}</h3>
                     <div className="gnt-field"><label>Product</label>
                       <select value={regForm.product} onChange={e => updateReg("product", e.target.value)}>
@@ -1721,6 +1832,61 @@ export default function App() {
                   </form>
                 )}
               </div>
+
+              {myCompany.status === "approved" && myCompany.type !== "broker" && (
+                <div className="gnt-card" style={{ marginBottom: 26 }}>
+                  <h3 style={{ fontSize: 18, marginBottom: 6 }}>Trust badges</h3>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Verified badges get more Market Board engagement and faster Accepts — build yours once, benefit on every future listing.</p>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+                    <span className="gnt-badge approved">Verified — CIPC + DMRE</span>
+                    {myCompany.past_performance_verified
+                      ? <span className="gnt-badge approved">Verified · Past Performance Checked</span>
+                      : <span className="gnt-badge pending">Past Performance not yet verified</span>}
+                    {myCompany.type === "seller" && myCompany.ownership_capacity === "mandate_holder" && (
+                      myCompany.mandate_verified
+                        ? <span className="gnt-badge approved">Mandate Verified</span>
+                        : <span className="gnt-badge pending">Mandate not yet verified</span>
+                    )}
+                  </div>
+
+                  <h4 style={{ fontSize: 14, marginBottom: 8 }}>Trade references (2 recommended)</h4>
+                  <form onSubmit={submitTradeReferences} style={{ marginBottom: 20 }}>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Reference 1 — company</label><input value={refForm.ref1Company} onChange={e => setRefForm(f => ({ ...f, ref1Company: e.target.value }))} /></div>
+                      <div className="gnt-field"><label>Reference 1 — contact</label><input value={refForm.ref1Contact} onChange={e => setRefForm(f => ({ ...f, ref1Contact: e.target.value }))} placeholder="Name, phone or email" /></div>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Reference 2 — company</label><input value={refForm.ref2Company} onChange={e => setRefForm(f => ({ ...f, ref2Company: e.target.value }))} /></div>
+                      <div className="gnt-field"><label>Reference 2 — contact</label><input value={refForm.ref2Contact} onChange={e => setRefForm(f => ({ ...f, ref2Contact: e.target.value }))} placeholder="Name, phone or email" /></div>
+                    </div>
+                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="submit" disabled={refSaving}>{refSaving ? "Saving…" : "Save references"}</button>
+                  </form>
+
+                  <h4 style={{ fontSize: 14, marginBottom: 8 }}>Past performance documents</h4>
+                  {docError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {docError}</div>}
+                  <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "past_performance")} style={{ marginBottom: 10 }} />
+                  {myDocuments.filter(d => d.doc_type === "past_performance").map(d => (
+                    <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                      <span>{d.file_name}</span>
+                      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
+                    </div>
+                  ))}
+
+                  {myCompany.type === "seller" && myCompany.ownership_capacity === "mandate_holder" && (
+                    <>
+                      <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>Mandate / Allocation proof (private — admin only, never shown to buyers)</h4>
+                      <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "mandate_proof")} style={{ marginBottom: 10 }} />
+                      {myDocuments.filter(d => d.doc_type === "mandate_proof").map(d => (
+                        <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                          <span>{d.file_name}</span>
+                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
 
               {myCompany.status === "approved" && myCompany.type !== "broker" && (
                 <>
@@ -2039,6 +2205,9 @@ export default function App() {
                   <div className="gnt-listing-top">
                     <div>
                       <span className={`gnt-badge ${isSell ? "selling" : "buying"}`} style={{ marginBottom: 8 }}>{isSell ? "Selling" : "Buying"}</span>
+                      {l.ownership_capacity && <span className="gnt-badge pending" style={{ marginBottom: 8, marginLeft: 6 }}>{OWNERSHIP_LABELS[l.ownership_capacity]}</span>}
+                      {l.mandate_verified && <span className="gnt-badge approved" style={{ marginBottom: 8, marginLeft: 6 }}>Mandate Verified</span>}
+                      {l.past_performance_verified && <span className="gnt-badge approved" style={{ marginBottom: 8, marginLeft: 6 }}>Past Performance Checked</span>}
                       <div className="gnt-listing-product">{l.product}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2119,7 +2288,7 @@ export default function App() {
                         <td className="mono">{c.dmre_license}</td>
                         <td>{c.ncnda_signed ? <span style={{ color: "var(--verified)" }}>Signed</span> : <span style={{ color: "var(--alert)" }}>Missing</span>}</td>
                         <td>{fmtDate(c.created_at)}</td>
-                        <td><button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setDetailCompany(c)}>View</button></td>
+                        <td><button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setDetailCompany(c); loadDetailDocuments(c.id); }}>View</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -2338,6 +2507,44 @@ export default function App() {
                   <div className="dt">IMFPA</div>
                   <div className="dd" style={{ fontFamily: "Inter" }}>{detailCompany.imfpa_signed ? `Signed by ${detailCompany.imfpa_signed_by}` : "Not yet signed"}</div>
                 </div>
+              )}
+              {detailCompany.ownership_capacity && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div className="dt">Ownership / capacity</div>
+                  <div className="dd" style={{ fontFamily: "Inter" }}>{OWNERSHIP_LABELS[detailCompany.ownership_capacity] || detailCompany.ownership_capacity}</div>
+                </div>
+              )}
+              {(detailCompany.trade_ref_1_company || detailCompany.trade_ref_2_company) && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div className="dt">Trade references</div>
+                  <div className="dd" style={{ fontFamily: "Inter" }}>
+                    {detailCompany.trade_ref_1_company && <div>{detailCompany.trade_ref_1_company} — {detailCompany.trade_ref_1_contact}</div>}
+                    {detailCompany.trade_ref_2_company && <div>{detailCompany.trade_ref_2_company} — {detailCompany.trade_ref_2_contact}</div>}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {detailDocuments.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div className="dt" style={{ marginBottom: 6 }}>Uploaded documents</div>
+                {detailDocuments.map(d => (
+                  <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : "Past performance"})</span></span>
+                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => viewCompanyDoc(d)}>View</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              <button className={`gnt-btn gnt-btn-sm ${detailCompany.past_performance_verified ? "gnt-btn-ghost" : "gnt-btn-amber"}`} onClick={() => togglePastPerformanceVerified(detailCompany)}>
+                {detailCompany.past_performance_verified ? "Revoke Past Performance badge" : "Grant Past Performance badge"}
+              </button>
+              {detailCompany.type === "seller" && detailCompany.ownership_capacity === "mandate_holder" && (
+                <button className={`gnt-btn gnt-btn-sm ${detailCompany.mandate_verified ? "gnt-btn-ghost" : "gnt-btn-amber"}`} onClick={() => toggleMandateVerified(detailCompany)}>
+                  {detailCompany.mandate_verified ? "Revoke Mandate Verified badge" : "Grant Mandate Verified badge"}
+                </button>
               )}
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
