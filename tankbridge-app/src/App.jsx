@@ -45,7 +45,7 @@ const EMPTY_REG = {
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "",
 };
-const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedure: "" };
+const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {} };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
@@ -69,7 +69,7 @@ function TermsCheckboxGroup({ value, onChange }) {
 }
 
 const STYLE = `
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 .gnt { font-family:'Inter',sans-serif; color:var(--ink); background:var(--paper); min-height:100vh; }
 .gnt, .gnt * { box-sizing:border-box; }
@@ -87,10 +87,9 @@ const STYLE = `
 .gnt-header { position:sticky; top:0; z-index:30; background:var(--ink); color:var(--paper); border-bottom:3px solid var(--amber); }
 .gnt-header-inner { max-width:1180px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; position:relative; }
 .gnt-brand { display:flex; align-items:center; gap:10px; cursor:pointer; }
-.gnt-brand-mark { width:34px; height:34px; border:2px solid var(--amber); display:flex; align-items:center; justify-content:center; transform:rotate(45deg); flex-shrink:0; }
-.gnt-brand-mark svg { transform:rotate(-45deg); }
-.gnt-brand-text { font-size:22px; letter-spacing:0.06em; line-height:1; }
-.gnt-brand-sub { font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--amber); letter-spacing:0.14em; text-transform:uppercase; }
+.gnt-brand-mark { width:34px; height:34px; border-radius:9px; background:#1c2c40; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.gnt-brand-text { font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:20px; letter-spacing:0; line-height:1; }
+.gnt-brand-sub { font-family:'Space Grotesk',sans-serif; font-weight:500; font-size:9.5px; color:var(--amber); letter-spacing:0.1em; text-transform:uppercase; }
 .gnt-nav { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .gnt-nav button { background:none; border:none; color:var(--paper); opacity:0.75; font-size:14px; padding:8px 12px; cursor:pointer; font-weight:500; border-bottom:2px solid transparent; }
 .gnt-nav button:hover { opacity:1; }
@@ -466,6 +465,7 @@ export default function App() {
   const [referralError, setReferralError] = useState("");
   const [referralAgree, setReferralAgree] = useState(false);
   const [referralName, setReferralName] = useState("");
+  const [referralConfirmOpen, setReferralConfirmOpen] = useState(false);
 
   const [regType, setRegType] = useState("seller");
   const [regStep, setRegStep] = useState("form"); // form -> confirm-email (only if email confirmation required) -> ncnda -> done
@@ -817,6 +817,7 @@ export default function App() {
 
   // ---------- LISTINGS (dashboard) ----------
   function updateListingField(field, value) { setListingForm(f => ({ ...f, [field]: value })); }
+  function updateListingProcedure(term, value) { setListingForm(f => ({ ...f, procedures: { ...f.procedures, [term]: value } })); }
 
   async function submitListing(e) {
     e.preventDefault();
@@ -837,7 +838,7 @@ export default function App() {
       location: listingForm.location,
       availability: listingForm.availability,
       notes: listingForm.notes,
-      procedure: listingForm.procedure,
+      procedures: listingForm.procedures,
       status: "active", // this form is only reachable once the company is already approved
     });
     if (error) { setListingError(error.message); return; }
@@ -849,6 +850,7 @@ export default function App() {
 
   function startEdit(listing) { setEditingListing({ ...listing, volume: String(listing.volume), unit_price: String(listing.unit_price) }); setEditError(""); }
   function updateEditField(field, value) { setEditingListing(f => ({ ...f, [field]: value })); }
+  function updateEditProcedure(term, value) { setEditingListing(f => ({ ...f, procedures: { ...(f.procedures || {}), [term]: value } })); }
   function cancelEdit() { setEditingListing(null); setEditError(""); }
 
   async function saveEdit(e) {
@@ -866,7 +868,7 @@ export default function App() {
       terms: editingListing.terms,
       availability: editingListing.availability,
       notes: editingListing.notes,
-      procedure: editingListing.procedure,
+      procedures: editingListing.procedures || {},
     }).eq("id", editingListing.id);
     if (error) { setEditError(error.message); return; }
     setEditingListing(null);
@@ -940,7 +942,7 @@ export default function App() {
   // ---------- REFERRALS (broker) ----------
   function updateReferralField(field, value) { setReferralForm(f => ({ ...f, [field]: value })); }
 
-  async function submitReferral(e) {
+  function submitReferral(e) {
     e.preventDefault();
     const f = referralForm;
     if (!f.referredCompanyName || !f.referredCipc || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
@@ -955,6 +957,11 @@ export default function App() {
     if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
     if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
     setReferralError("");
+    setReferralConfirmOpen(true);
+  }
+
+  async function confirmSubmitReferral() {
+    const f = referralForm;
     const resolvedLocation = f.location === "Other" ? f.locationOther.trim() : f.location;
     const { error } = await supabase.from("referrals").insert({
       broker_company_id: myCompany.id,
@@ -975,6 +982,7 @@ export default function App() {
       agreement_accepted_by: referralName,
       agreement_accepted_at: new Date().toISOString(),
     });
+    setReferralConfirmOpen(false);
     if (error) { setReferralError(error.message); return; }
     setReferralForm(EMPTY_REFERRAL);
     setReferralAgree(false);
@@ -1132,17 +1140,15 @@ export default function App() {
         <div className="gnt-header-inner">
           <div className="gnt-brand" onClick={() => goto("landing")}>
             <div className="gnt-brand-mark">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#e39a2d" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="2" y1="17" x2="22" y2="17" />
-                <path d="M2 10 Q12 2 22 10" />
-                <line x1="6" y1="17" x2="6" y2="20" />
-                <line x1="18" y1="17" x2="18" y2="20" />
-                <line x1="6" y1="17" x2="6" y2="6" />
-                <line x1="18" y1="17" x2="18" y2="6" />
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#e39a2d" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="3" width="6" height="12" rx="1" />
+                <line x1="9" y1="7" x2="15" y2="7" />
+                <line x1="4" y1="20" x2="20" y2="20" />
+                <line x1="12" y1="15" x2="12" y2="20" />
               </svg>
             </div>
             <div>
-              <div className="gnt-brand-text">TANKBRIDGE</div>
+              <div className="gnt-brand-text">Tankbridge</div>
               <div className="gnt-brand-sub">Bulk Diesel Exchange · ZA</div>
             </div>
           </div>
@@ -1738,10 +1744,18 @@ export default function App() {
                       <div className="gnt-field"><label>Availability</label><input value={listingForm.availability} onChange={e => updateListingField("availability", e.target.value)} placeholder="e.g. Immediate / 48 hrs" /></div>
                     </div>
                     <div className="gnt-field"><label>Notes (optional)</label><textarea rows={2} value={listingForm.notes} onChange={e => updateListingField("notes", e.target.value)} /></div>
-                    <div className="gnt-field">
-                      <label>{myCompany.type === "seller" ? "Seller Procedure" : "Buyer Procedure"}</label>
-                      <textarea rows={4} value={listingForm.procedure} onChange={e => updateListingField("procedure", e.target.value)} placeholder="Step-by-step process to conclude this trade." />
-                    </div>
+                    {listingForm.terms.length > 0 && (
+                      <div className="gnt-field">
+                        <label>{myCompany.type === "seller" ? "Seller Procedure" : "Buyer Procedure"} — per trading term</label>
+                        <div className="hint" style={{ marginBottom: 8 }}>Shown to a counterparty before they accept your price — one procedure per selected term, since COC/COD/ITT/TTO can work differently.</div>
+                        {listingForm.terms.map(term => (
+                          <div key={term} style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, color: "var(--steel-soft)" }}>{term} procedure</label>
+                            <textarea rows={3} value={listingForm.procedures[term] || ""} onChange={e => updateListingProcedure(term, e.target.value)} placeholder={`Step-by-step process to conclude this trade under ${term}.`} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <button className="gnt-btn gnt-btn-amber" type="submit"><Plus size={15} /> Publish to Market Board</button>
                   </form>
 
@@ -1759,6 +1773,17 @@ export default function App() {
                         <div className="gnt-field"><label>Terms (select all that apply)</label>
                           <TermsCheckboxGroup value={editingListing.terms || []} onChange={v => updateEditField("terms", v)} />
                         </div>
+                        {(editingListing.terms || []).length > 0 && (
+                          <div className="gnt-field">
+                            <label>Procedure — per trading term</label>
+                            {editingListing.terms.map(term => (
+                              <div key={term} style={{ marginBottom: 10 }}>
+                                <label style={{ fontSize: 12, color: "var(--steel-soft)" }}>{term} procedure</label>
+                                <textarea rows={3} value={(editingListing.procedures || {})[term] || ""} onChange={e => updateEditProcedure(term, e.target.value)} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div style={{ display: "flex", gap: 10 }}>
                           <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit">Save</button>
                           <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={cancelEdit}>Cancel</button>
@@ -2338,8 +2363,15 @@ export default function App() {
                   {acceptTarget.product} · {Number(acceptTarget.volume).toLocaleString()} ℓ · {fmtMoney(acceptTarget.unit_price)}/ℓ · {fmtTerms(acceptTarget.terms)} · {acceptTarget.location}
                 </p>
                 <div className="gnt-doc-box" style={{ maxHeight: 220 }}>
-                  {acceptTarget.procedure && acceptTarget.procedure.trim()
-                    ? <p style={{ whiteSpace: "pre-wrap" }}>{acceptTarget.procedure}</p>
+                  {acceptTarget.procedures && Object.values(acceptTarget.procedures).some(v => v && v.trim())
+                    ? (Array.isArray(acceptTarget.terms) ? acceptTarget.terms : [acceptTarget.terms]).map(term => (
+                        acceptTarget.procedures[term] && acceptTarget.procedures[term].trim() ? (
+                          <div key={term} style={{ marginBottom: 14 }}>
+                            <h4 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--steel-soft)", marginBottom: 4 }}>{term}</h4>
+                            <p style={{ whiteSpace: "pre-wrap" }}>{acceptTarget.procedures[term]}</p>
+                          </div>
+                        ) : null
+                      ))
                     : <p style={{ color: "var(--steel-soft)" }}>No procedure has been provided for this listing yet.</p>}
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
@@ -2369,6 +2401,22 @@ export default function App() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Referral submit confirmation */}
+      {referralConfirmOpen && (
+        <div className="gnt-modal-backdrop" onClick={() => setReferralConfirmOpen(false)}>
+          <div className="gnt-modal" onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 20, marginBottom: 10 }}>Confirm your referral</h3>
+            <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}>
+              Thank you for introducing this {referralForm.referredType}. {referralForm.referredCompanyName || "Their"} information will go to Tankbridge admin for review, and their contact person will be notified by email once approved.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="gnt-btn gnt-btn-amber" onClick={confirmSubmitReferral}>Confirm &amp; notify admin</button>
+              <button className="gnt-btn gnt-btn-ghost" onClick={() => setReferralConfirmOpen(false)}>Back</button>
+            </div>
           </div>
         </div>
       )}
@@ -2407,7 +2455,7 @@ export default function App() {
 
       <div className="gnt-main">
         <div className="gnt-footer">
-          <span>TANKBRIDGE — Bulk Diesel Exchange</span>
+          <span>Tankbridge — Bulk Diesel Exchange</span>
           <span>{boardListings.length} live listings</span>
         </div>
       </div>
