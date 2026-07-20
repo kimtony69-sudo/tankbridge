@@ -3,6 +3,10 @@
     {
       "path": "/api/weekly-checkin",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/weekly-price-check",
+      "schedule": "0 8 * * 1"
     }
   ]
 }
