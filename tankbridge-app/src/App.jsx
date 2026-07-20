@@ -503,6 +503,10 @@ export default function App() {
   const [docError, setDocError] = useState("");
   const [refForm, setRefForm] = useState({ ref1Company: "", ref1Contact: "", ref2Company: "", ref2Contact: "" });
   const [refSaving, setRefSaving] = useState(false);
+  const [showResubmit, setShowResubmit] = useState(false);
+  const [resubmitForm, setResubmitForm] = useState({ companyName: "", cipc: "", dmreLicense: "", address: "" });
+  const [resubmitError, setResubmitError] = useState("");
+  const [resubmitSaving, setResubmitSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
   const [imfpaCommissionRate, setImfpaCommissionRate] = useState("0.10");
@@ -516,6 +520,9 @@ export default function App() {
   const [adminTab, setAdminTab] = useState("pending");
   const [detailCompany, setDetailCompany] = useState(null);
   const [detailDocuments, setDetailDocuments] = useState([]);
+  const [showAdminEditCompany, setShowAdminEditCompany] = useState(false);
+  const [adminEditForm, setAdminEditForm] = useState({ companyName: "", cipc: "", dmreLicense: "", address: "" });
+  const [adminEditSaving, setAdminEditSaving] = useState(false);
 
   const showToast = (msg, kind = "ok") => { setToast({ msg, kind }); setTimeout(() => setToast(null), 3500); };
   function goto(v) { setView(v); setMobileMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }
@@ -986,6 +993,31 @@ export default function App() {
     showToast("Trade references saved — admin will review them.");
   }
 
+  function startResubmit(company) {
+    setResubmitForm({ companyName: company.company_name || "", cipc: company.cipc || "", dmreLicense: company.dmre_license || "", address: company.address || "" });
+    setResubmitError("");
+    setShowResubmit(true);
+  }
+
+  async function submitResubmit(e, company) {
+    e.preventDefault();
+    if (!resubmitForm.companyName) { setResubmitError("Company name is required."); return; }
+    if (company.type === "seller" && !resubmitForm.dmreLicense) { setResubmitError("DMRE wholesale license is required for sellers."); return; }
+    setResubmitSaving(true);
+    const { error } = await supabase.rpc("resubmit_registration", {
+      p_company_name: resubmitForm.companyName,
+      p_cipc: resubmitForm.cipc,
+      p_dmre_license: resubmitForm.dmreLicense,
+      p_address: resubmitForm.address,
+    });
+    setResubmitSaving(false);
+    if (error) { setResubmitError(error.message); return; }
+    const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
+    setMyCompany(co);
+    setShowResubmit(false);
+    showToast("Resubmitted — admin will review your updated details.");
+  }
+
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
@@ -1127,6 +1159,28 @@ export default function App() {
     await loadAdminData();
     setDetailCompany(c => c && ({ ...c, mandate_verified: !company.mandate_verified }));
     showToast(`Mandate Verified badge ${!company.mandate_verified ? "granted" : "revoked"}.`);
+  }
+
+  function startAdminEditCompany(company) {
+    setAdminEditForm({ companyName: company.company_name || "", cipc: company.cipc || "", dmreLicense: company.dmre_license || "", address: company.address || "" });
+    setShowAdminEditCompany(true);
+  }
+
+  async function submitAdminEditCompany(e, company) {
+    e.preventDefault();
+    setAdminEditSaving(true);
+    const { error } = await supabase.from("companies").update({
+      company_name: adminEditForm.companyName,
+      cipc: adminEditForm.cipc || null,
+      dmre_license: company.type === "seller" ? (adminEditForm.dmreLicense || null) : null,
+      address: adminEditForm.address || null,
+    }).eq("id", company.id);
+    setAdminEditSaving(false);
+    if (error) { showToast(error.message, "err"); return; }
+    setDetailCompany(c => c && ({ ...c, company_name: adminEditForm.companyName, cipc: adminEditForm.cipc, dmre_license: adminEditForm.dmreLicense, address: adminEditForm.address }));
+    setShowAdminEditCompany(false);
+    await loadAdminData();
+    showToast("Company details updated.");
   }
 
   function updateCommissionInput(dealId, value) { setCommissionEdits(f => ({ ...f, [dealId]: value })); }
@@ -1812,7 +1866,29 @@ export default function App() {
                   )}
                 </div>
                 {myCompany.status === "pending" && <div className="gnt-info-banner"><Clock size={16} /> Awaiting admin review.</div>}
-                {myCompany.status === "rejected" && <div className="gnt-alert-banner"><XCircle size={16} /> This registration was not approved. Contact Tankbridge admin.</div>}
+                {myCompany.status === "rejected" && !showResubmit && (
+                  <div className="gnt-alert-banner" style={{ alignItems: "center", justifyContent: "space-between" }}>
+                    <span><XCircle size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />This registration was not approved. Contact Tankbridge admin, or fix and resubmit your details below.</span>
+                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => startResubmit(myCompany)}>Fix &amp; resubmit</button>
+                  </div>
+                )}
+                {myCompany.status === "rejected" && showResubmit && (
+                  <form onSubmit={e => submitResubmit(e, myCompany)} style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+                    {resubmitError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {resubmitError}</div>}
+                    <div className="gnt-field"><label>Company name</label><input value={resubmitForm.companyName} onChange={e => setResubmitForm(f => ({ ...f, companyName: e.target.value }))} /></div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={resubmitForm.cipc} onChange={e => setResubmitForm(f => ({ ...f, cipc: e.target.value }))} /></div>
+                      {myCompany.type === "seller" && (
+                        <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={resubmitForm.dmreLicense} onChange={e => setResubmitForm(f => ({ ...f, dmreLicense: e.target.value }))} /></div>
+                      )}
+                    </div>
+                    <div className="gnt-field"><label>Address</label><textarea rows={2} value={resubmitForm.address} onChange={e => setResubmitForm(f => ({ ...f, address: e.target.value }))} /></div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={resubmitSaving}>{resubmitSaving ? "Submitting…" : "Resubmit for review"}</button>
+                      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShowResubmit(false)}>Cancel</button>
+                    </div>
+                  </form>
+                )}
 
                 {!showEditProfile ? (
                   <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 14 }} onClick={() => startEditProfile(myCompany)}>Edit contact person / phone / address</button>
@@ -2484,7 +2560,7 @@ export default function App() {
 
       {/* Detail modal */}
       {detailCompany && (
-        <div className="gnt-modal-backdrop" onClick={() => setDetailCompany(null)}>
+        <div className="gnt-modal-backdrop" onClick={() => { setDetailCompany(null); setShowAdminEditCompany(false); }}>
           <div className="gnt-modal" onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div><h3 style={{ fontSize: 24 }}>{detailCompany.company_name}</h3><p style={{ fontSize: 12.5, color: "var(--steel-soft)", textTransform: "uppercase" }}>{detailCompany.type}</p></div>
@@ -2546,7 +2622,24 @@ export default function App() {
                   {detailCompany.mandate_verified ? "Revoke Mandate Verified badge" : "Grant Mandate Verified badge"}
                 </button>
               )}
+              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => showAdminEditCompany ? setShowAdminEditCompany(false) : startAdminEditCompany(detailCompany)}>
+                {showAdminEditCompany ? "Cancel edit" : "Edit company name / CIPC / DMRE / address"}
+              </button>
             </div>
+
+            {showAdminEditCompany && (
+              <form onSubmit={e => submitAdminEditCompany(e, detailCompany)} style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+                <div className="gnt-field"><label>Company name</label><input value={adminEditForm.companyName} onChange={e => setAdminEditForm(f => ({ ...f, companyName: e.target.value }))} /></div>
+                <div className="gnt-grid2">
+                  <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={adminEditForm.cipc} onChange={e => setAdminEditForm(f => ({ ...f, cipc: e.target.value }))} /></div>
+                  {detailCompany.type === "seller" && (
+                    <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={adminEditForm.dmreLicense} onChange={e => setAdminEditForm(f => ({ ...f, dmreLicense: e.target.value }))} /></div>
+                  )}
+                </div>
+                <div className="gnt-field"><label>Address</label><textarea rows={2} value={adminEditForm.address} onChange={e => setAdminEditForm(f => ({ ...f, address: e.target.value }))} /></div>
+                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={adminEditSaving}>{adminEditSaving ? "Saving…" : "Save"}</button>
+              </form>
+            )}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               {detailCompany.status !== "approved" && (
                 <button className="gnt-btn gnt-btn-amber" disabled={!detailCompany.ncnda_signed} onClick={() => setCompanyStatus(detailCompany, "approved")}>
@@ -2556,7 +2649,7 @@ export default function App() {
               {detailCompany.status !== "rejected" && (
                 <button className="gnt-btn gnt-btn-danger" onClick={() => setCompanyStatus(detailCompany, "rejected")}><XCircle size={15} /> Reject</button>
               )}
-              <button className="gnt-btn gnt-btn-ghost" onClick={() => setDetailCompany(null)}>Close</button>
+              <button className="gnt-btn gnt-btn-ghost" onClick={() => { setDetailCompany(null); setShowAdminEditCompany(false); }}>Close</button>
             </div>
           </div>
         </div>
