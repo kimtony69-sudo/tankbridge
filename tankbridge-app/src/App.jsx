@@ -1560,26 +1560,22 @@ export default function App() {
             </div>
           </section>
 
-          <section className="gnt-section">
-            <div className="gnt-section-head">
-              <h2>For brokers</h2>
-              <p>Introduce once. Get paid every time it closes.</p>
-            </div>
-            <div className="gnt-grid3">
-              <div className="gnt-card">
-                <Handshake size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Introduce, don't chase</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Submit a buyer or seller's details once. Tankbridge handles CIPC/DMRE verification and invites them to register directly — no more weeks spent chasing paperwork yourself.</p>
-              </div>
-              <div className="gnt-card">
-                <ShieldCheck size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Your exposure is protected</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every referral is timestamped and logged the moment you submit it — your introduction is on record before either side ever sees a name.</p>
-              </div>
-              <div className="gnt-card">
-                <FileSignature size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>30% of the brokerage fee, guaranteed in writing</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every referral is bound by the same NCNDA all parties sign — commission terms are fixed and disclosed before you introduce anyone.</p>
+          <section style={{ background: "var(--ink)", margin: "0 -20px", padding: "36px 20px" }}>
+            <div style={{ maxWidth: 900, margin: "0 auto" }}>
+              <h2 style={{ fontSize: 22, marginBottom: 16, color: "var(--paper)" }}>For brokers — introduce once, get paid every time it closes</h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
+                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>01</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Introduce a buyer or seller once — Tankbridge verifies them and invites them to register.</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
+                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>02</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Your referral is timestamped and logged before either side ever sees a name.</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
+                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>03</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>30% of the brokerage fee, fixed and disclosed in the NCNDA up front.</span>
+                </div>
               </div>
             </div>
           </section>
