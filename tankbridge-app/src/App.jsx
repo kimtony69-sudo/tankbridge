@@ -1566,7 +1566,7 @@ export default function App() {
           </section>
 
           <section style={{ padding: "8px 0 40px" }}>
-            <h3 style={{ fontSize: 30, marginBottom: 8, color: "var(--alert)" }}>Blacklist</h3>
+            <h3 style={{ fontSize: 30, marginBottom: 8, color: "var(--ink)" }}>Black Listed Companies</h3>
             <p style={{ fontSize: 13.5, color: "var(--steel-soft)", marginBottom: 14 }}>Companies published here have breached their obligations to Tankbridge or a counterparty — non-payment of commission, fraudulent listings, circumvention, or other serious breaches — with the reason stated.</p>
             {publicBlacklist.length === 0 ? (
               <div className="gnt-empty" style={{ padding: "24px 20px" }}>No companies currently blacklisted.</div>
