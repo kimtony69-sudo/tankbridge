@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Truck, ShieldCheck, Clock, CheckCircle2, XCircle, FileSignature,
   ChevronRight, LogIn, Search, Plus, MapPin, Building2,
-  BadgeCheck, AlertTriangle, ArrowLeft, Mail, Phone, Lock, LogOut, Menu, X
+  BadgeCheck, AlertTriangle, ArrowLeft, Mail, Phone, Lock, LogOut, Menu, X, Handshake
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -154,6 +154,7 @@ const STYLE = `
 /* CARDS */
 .gnt-card { background:var(--panel); border:1px solid var(--line); padding:22px; position:relative; }
 .gnt-grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.gnt-grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
 .gnt-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 
 /* FORMS */
@@ -220,6 +221,7 @@ const STYLE = `
   .gnt-steps{grid-template-columns:1fr;}
   .gnt-step{border-right:none;border-bottom:1px solid var(--line);}
   .gnt-grid3{grid-template-columns:1fr;}
+  .gnt-grid4{grid-template-columns:1fr;}
   .gnt-grid2{grid-template-columns:1fr;}
   .gnt-detail-grid{grid-template-columns:1fr;}
   .gnt-nav{
@@ -430,7 +432,15 @@ export default function App() {
     } catch { return null; }
   })();
 
-  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : "landing");
+  const requestedView = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const v = p.get("view");
+      return ["dashboard", "market", "admin"].includes(v) ? v : null;
+    } catch { return null; }
+  })();
+
+  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : requestedView || "landing");
   const [inviteReferral, setInviteReferral] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(true);
   const [inviteStep, setInviteStep] = useState("intro"); // intro -> account -> confirm-email -> ncnda -> done
@@ -1526,7 +1536,7 @@ export default function App() {
               <h2>Why Tankbridge</h2>
               <p>A trust layer for South Africa's bulk fuel market — not another layer of brokers.</p>
             </div>
-            <div className="gnt-grid3">
+            <div className="gnt-grid4">
               <div className="gnt-card">
                 <ShieldCheck size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Pre-vetted, compliant</h3>
@@ -1534,13 +1544,42 @@ export default function App() {
               </div>
               <div className="gnt-card">
                 <BadgeCheck size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Capital &amp; volume verified</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Sellers hold real, physical product; buyers hold real, executable capital.</p>
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Own it or represent it — clearly labelled</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every seller declares Title Holder or Mandate/Allocation status; every buyer declares direct funds or a financier. Proof of Product and Proof of Funds stay between the two parties — Tankbridge makes sure everyone starts from the same page.</p>
               </div>
               <div className="gnt-card">
                 <FileSignature size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Transparent, fixed commission</h3>
                 <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Disclosed brokerage terms and transparent pricing strip out hidden margins.</p>
+              </div>
+              <div className="gnt-card">
+                <Lock size={22} color="#3f6b52" />
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Built-in accountability</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>A 24-month non-circumvention clause with real financial penalties, plus a public blacklist for non-payment or bad faith — so introductions don't just evaporate.</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="gnt-section">
+            <div className="gnt-section-head">
+              <h2>For brokers</h2>
+              <p>Introduce once. Get paid every time it closes.</p>
+            </div>
+            <div className="gnt-grid3">
+              <div className="gnt-card">
+                <Handshake size={22} color="#3f6b52" />
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Introduce, don't chase</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Submit a buyer or seller's details once. Tankbridge handles CIPC/DMRE verification and invites them to register directly — no more weeks spent chasing paperwork yourself.</p>
+              </div>
+              <div className="gnt-card">
+                <ShieldCheck size={22} color="#3f6b52" />
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Your exposure is protected</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every referral is timestamped and logged the moment you submit it — your introduction is on record before either side ever sees a name.</p>
+              </div>
+              <div className="gnt-card">
+                <FileSignature size={22} color="#3f6b52" />
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>30% of the brokerage fee, guaranteed in writing</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every referral is bound by the same NCNDA all parties sign — commission terms are fixed and disclosed before you introduce anyone.</p>
               </div>
             </div>
           </section>
