@@ -1606,6 +1606,9 @@ export default function App() {
                 <button className={regType === "buyer" ? "active" : ""} onClick={() => setRegType("buyer")} type="button">I am a Buyer</button>
                 <button className={regType === "broker" ? "active" : ""} onClick={() => setRegType("broker")} type="button">Broker (Referral)</button>
               </div>
+              {regType !== "broker" && (
+                <p className="hint" style={{ marginBottom: 20 }}>Already registered as a {regType === "seller" ? "buyer" : "seller"}? Trading both ways is fine — just register again here with a different email for your {regType} activity (e.g. add a "+{regType}" tag to your usual email address).</p>
+              )}
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={submitRegForm}>
                 <div className="gnt-field"><label>{regType === "broker" ? "Agency / company name" : "Company name"}</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
