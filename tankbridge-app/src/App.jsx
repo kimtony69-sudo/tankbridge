@@ -2388,6 +2388,7 @@ export default function App() {
                           <td>{adminCompanies.find(c => c.id === d.buyer_company_id)?.company_name}</td>
                           <td>
                             <span className={`gnt-badge ${d.status === "completed" ? "approved" : d.status === "cancelled" ? "rejected" : "pending"}`}>{d.status}</span>
+                            {d.status_change_note && <div style={{ fontSize: 11, color: "var(--steel-soft)", marginTop: 4 }}>{d.status_change_note}</div>}
                             <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                               {d.status !== "completed" && <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setDealStatus(d.id, "completed")}>Mark completed</button>}
                               {d.status !== "cancelled" && <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setDealStatus(d.id, "cancelled")}>Cancel</button>}
