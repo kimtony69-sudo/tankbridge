@@ -1638,7 +1638,7 @@ export default function App() {
               <div className="gnt-card">
                 <FileSignature size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Transparent, fixed commission</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Disclosed brokerage terms and transparent pricing strip out hidden margins.</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>You set your own price — Tankbridge never marks it up or influences it. Commission is a separate, disclosed line, not baked into your quote.</p>
               </div>
               <div className="gnt-card">
                 <Lock size={22} color="#3f6b52" />
@@ -1662,7 +1662,7 @@ export default function App() {
                 </div>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>03</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>30% of the brokerage fee, fixed and disclosed in the NCNDA up front.</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>30% of a small, disclosed per-litre commission — not a cut of the deal value — and only ever payable if the deal actually completes. No completed deal, no commission for anyone, platform included.</span>
                 </div>
               </div>
             </div>
