@@ -1638,7 +1638,7 @@ export default function App() {
               <div className="gnt-card">
                 <FileSignature size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Transparent, fixed commission</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>You set your own price — Tankbridge never marks it up or influences it. Commission is a separate, disclosed line, not baked into your quote.</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>You set your own price — Tankbridge never marks it up or adds a hidden margin. The commission rate is fixed and disclosed to every party before a deal is accepted, whether or not you build it into your quote.</p>
               </div>
               <div className="gnt-card">
                 <Lock size={22} color="#3f6b52" />
