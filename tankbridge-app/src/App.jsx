@@ -16,6 +16,22 @@ const OWNERSHIP_LABELS = {
   funder_involved: "Funder Involved",
 };
 
+const BOL_LABELS_SELLER = {
+  not_offered: "Not offering BOL terms",
+  open: "Open to BOL terms for first load",
+  case_by_case: "BOL terms — case-by-case, ask",
+};
+const BOL_LABELS_BUYER = {
+  not_offered: "Not requesting BOL terms",
+  open: "Requesting BOL terms for first load",
+  case_by_case: "Open to discuss BOL terms",
+};
+const BOL_MARKET_BADGE = {
+  not_offered: null,
+  open: "BOL: Open",
+  case_by_case: "BOL: Case-by-case",
+};
+
 const TRADE_TERMS = ["COC", "COD", "ITT", "TTO"];
 const BUYER_FELL_THROUGH_REASONS = [
   "Could not verify Proof of Product",
@@ -52,7 +68,7 @@ const EMPTY_REG = {
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "",
 };
-const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {} };
+const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered" };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
@@ -358,6 +374,7 @@ function DealCard({ deal, myCompany, onReported }) {
         <div>
           <span className={`gnt-badge ${deal.status === "completed" ? "approved" : deal.status === "cancelled" ? "rejected" : "pending"}`} style={{ marginBottom: 6 }}>{deal.status}</span>
           <div style={{ fontSize: 15, fontWeight: 600 }}>{deal.product} · {Number(deal.volume).toLocaleString()} ℓ · {fmtTerms(deal.terms)} · {deal.location}</div>
+          {deal.bol_requested && <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 2 }}>BOL terms requested for first load{deal.bol_note ? ` — "${deal.bol_note}"` : ""}</div>}
         </div>
         <div className="mono" style={{ fontWeight: 600 }}>{fmtMoney(deal.unit_price)}/ℓ</div>
       </div>
@@ -533,6 +550,8 @@ export default function App() {
   const [customNcndaLoading, setCustomNcndaLoading] = useState(false);
   const [customNcndaAgree, setCustomNcndaAgree] = useState(false);
   const [customNcndaAckName, setCustomNcndaAckName] = useState("");
+  const [bolRequested, setBolRequested] = useState(false);
+  const [bolNote, setBolNote] = useState("");
 
   const [adminTab, setAdminTab] = useState("pending");
   const [detailCompany, setDetailCompany] = useState(null);
@@ -934,6 +953,7 @@ export default function App() {
       availability: listingForm.availability,
       notes: listingForm.notes,
       procedures: listingForm.procedures,
+      bol_terms: listingForm.bolTerms,
       status: "active", // this form is only reachable once the company is already approved
     });
     if (error) { setListingError(error.message); return; }
@@ -964,6 +984,7 @@ export default function App() {
       availability: editingListing.availability,
       notes: editingListing.notes,
       procedures: editingListing.procedures || {},
+      bol_terms: editingListing.bol_terms || "not_offered",
     }).eq("id", editingListing.id);
     if (error) { setEditError(error.message); return; }
     setEditingListing(null);
@@ -1161,6 +1182,8 @@ export default function App() {
     setCustomNcndaUrl(null);
     setCustomNcndaAgree(false);
     setCustomNcndaAckName("");
+    setBolRequested(false);
+    setBolNote("");
     if (listing.ncnda_source === "custom") {
       setCustomNcndaLoading(true);
       (async () => {
@@ -1183,6 +1206,8 @@ export default function App() {
     const { data: deal, error } = await supabase.rpc("accept_listing_price", {
       p_listing_id: acceptTarget.id,
       p_custom_ncnda_ack_by: acceptTarget.ncnda_source === "custom" ? customNcndaAckName : null,
+      p_bol_requested: myCompany?.type === "buyer" ? bolRequested : false,
+      p_bol_note: myCompany?.type === "buyer" && bolRequested ? bolNote : null,
     });
     if (error) { setAcceptError(error.message); return; }
     const isSellListing = acceptTarget.kind !== "buy";
@@ -1257,6 +1282,14 @@ export default function App() {
     await loadAdminData();
     setDetailCompany(c => c && ({ ...c, mandate_verified: !company.mandate_verified }));
     showToast(`Mandate Verified badge ${!company.mandate_verified ? "granted" : "revoked"}.`);
+  }
+
+  async function toggleProductVerified(company) {
+    const { error } = await supabase.rpc("set_product_verified", { p_company_id: company.id, p_verified: !company.product_verified });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    setDetailCompany(c => c && ({ ...c, product_verified: !company.product_verified }));
+    showToast(`Product Verified badge ${!company.product_verified ? "granted" : "revoked"}.`);
   }
 
   function startAdminEditCompany(company) {
@@ -2074,6 +2107,11 @@ export default function App() {
                         ? <span className="gnt-badge approved">Mandate Verified</span>
                         : <span className="gnt-badge pending">Mandate not yet verified</span>
                     )}
+                    {myCompany.type === "seller" && myCompany.ownership_capacity === "title_holder" && (
+                      myCompany.product_verified
+                        ? <span className="gnt-badge approved">Product Verified</span>
+                        : <span className="gnt-badge pending">Product not yet verified</span>
+                    )}
                   </div>
 
                   <h4 style={{ fontSize: 14, marginBottom: 8 }}>Trade references (2 recommended)</h4>
@@ -2111,6 +2149,20 @@ export default function App() {
                       ))}
                     </>
                   )}
+
+                  {myCompany.type === "seller" && myCompany.ownership_capacity === "title_holder" && (
+                    <>
+                      <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>Tank report / Proof of Product (private — admin only, never shown to buyers)</h4>
+                      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>The clearest evidence is a Vopak (or equivalent terminal) tank report issued in your own company's name.</p>
+                      <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "tank_report")} style={{ marginBottom: 10 }} />
+                      {myDocuments.filter(d => d.doc_type === "tank_report").map(d => (
+                        <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                          <span>{d.file_name}</span>
+                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
 
@@ -2139,6 +2191,15 @@ export default function App() {
                       <div className="gnt-field"><label>Availability</label><input value={listingForm.availability} onChange={e => updateListingField("availability", e.target.value)} placeholder="e.g. Immediate / 48 hrs" /></div>
                     </div>
                     <div className="gnt-field"><label>Notes (optional)</label><textarea rows={2} value={listingForm.notes} onChange={e => updateListingField("notes", e.target.value)} /></div>
+                    <div className="gnt-field">
+                      <label>BOL terms for first load (optional)</label>
+                      <select value={listingForm.bolTerms} onChange={e => updateListingField("bolTerms", e.target.value)}>
+                        {Object.entries(myCompany.type === "seller" ? BOL_LABELS_SELLER : BOL_LABELS_BUYER).map(([v, label]) => (
+                          <option key={v} value={v}>{label}</option>
+                        ))}
+                      </select>
+                      <div className="hint">Relevant mainly for COC — whether payment can happen after loading (via Bill of Lading) rather than before, for a first-time counterparty. Shown on the Market Board; final terms are still agreed directly between the parties.</div>
+                    </div>
                     {listingForm.terms.length > 0 && (
                       <div className="gnt-field">
                         <label>{myCompany.type === "seller" ? "Seller Procedure" : "Buyer Procedure"} — per trading term</label>
@@ -2179,6 +2240,14 @@ export default function App() {
                             ))}
                           </div>
                         )}
+                        <div className="gnt-field">
+                          <label>BOL terms for first load (optional)</label>
+                          <select value={editingListing.bol_terms || "not_offered"} onChange={e => updateEditField("bol_terms", e.target.value)}>
+                            {Object.entries(myCompany.type === "seller" ? BOL_LABELS_SELLER : BOL_LABELS_BUYER).map(([v, label]) => (
+                              <option key={v} value={v}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
                         <div style={{ display: "flex", gap: 10 }}>
                           <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit">Save</button>
                           <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={cancelEdit}>Cancel</button>
@@ -2433,7 +2502,9 @@ export default function App() {
                       <span className={`gnt-badge ${isSell ? "selling" : "buying"}`} style={{ marginBottom: 8 }}>{isSell ? "Selling" : "Buying"}</span>
                       {l.ownership_capacity && <span className="gnt-badge pending" style={{ marginBottom: 8, marginLeft: 6 }}>{OWNERSHIP_LABELS[l.ownership_capacity]}</span>}
                       {l.mandate_verified && <span className="gnt-badge approved" style={{ marginBottom: 8, marginLeft: 6 }}>Mandate Verified</span>}
+                      {l.product_verified && <span className="gnt-badge approved" style={{ marginBottom: 8, marginLeft: 6 }}>Product Verified</span>}
                       {l.past_performance_verified && <span className="gnt-badge approved" style={{ marginBottom: 8, marginLeft: 6 }}>Past Performance Checked</span>}
+                      {BOL_MARKET_BADGE[l.bol_terms] && <span className="gnt-badge pending" style={{ marginBottom: 8, marginLeft: 6 }}>{BOL_MARKET_BADGE[l.bol_terms]}</span>}
                       <div className="gnt-listing-product">{l.product}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2533,7 +2604,7 @@ export default function App() {
                     <tbody>
                       {adminDeals.filter(d => showCancelledDeals || d.status !== "cancelled").map(d => (
                         <tr key={d.id}>
-                          <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {fmtTerms(d.terms)} · {d.location}</span></td>
+                          <td>{d.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(d.volume).toLocaleString()} ℓ @ {fmtMoney(d.unit_price)} · {fmtTerms(d.terms)} · {d.location}</span>{d.bol_requested && <div style={{ fontSize: 11, color: "var(--alert)", marginTop: 3 }}>BOL requested{d.bol_note ? `: "${d.bol_note}"` : ""}</div>}</td>
                           <td>{adminCompanies.find(c => c.id === d.seller_company_id)?.company_name}</td>
                           <td>{adminCompanies.find(c => c.id === d.buyer_company_id)?.company_name}</td>
                           <td>
@@ -2773,7 +2844,7 @@ export default function App() {
                 <div className="dt" style={{ marginBottom: 6 }}>Uploaded documents</div>
                 {detailDocuments.map(d => (
                   <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
-                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : "Past performance"})</span></span>
+                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : d.doc_type === "tank_report" ? "Tank report / POP" : "Past performance"})</span></span>
                     <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => viewCompanyDoc(d)}>View</button>
                   </div>
                 ))}
@@ -2787,6 +2858,11 @@ export default function App() {
               {detailCompany.type === "seller" && detailCompany.ownership_capacity === "mandate_holder" && (
                 <button className={`gnt-btn gnt-btn-sm ${detailCompany.mandate_verified ? "gnt-btn-ghost" : "gnt-btn-amber"}`} onClick={() => toggleMandateVerified(detailCompany)}>
                   {detailCompany.mandate_verified ? "Revoke Mandate Verified badge" : "Grant Mandate Verified badge"}
+                </button>
+              )}
+              {detailCompany.type === "seller" && detailCompany.ownership_capacity === "title_holder" && (
+                <button className={`gnt-btn gnt-btn-sm ${detailCompany.product_verified ? "gnt-btn-ghost" : "gnt-btn-amber"}`} onClick={() => toggleProductVerified(detailCompany)}>
+                  {detailCompany.product_verified ? "Revoke Product Verified badge" : "Grant Product Verified badge"}
                 </button>
               )}
               <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => showAdminEditCompany ? setShowAdminEditCompany(false) : startAdminEditCompany(detailCompany)}>
@@ -2860,6 +2936,20 @@ export default function App() {
                       <span>I have read and agree to be bound by the listing owner's NCNDA above.</span>
                     </label>
                     <div className="gnt-field"><label>Type your full legal name to sign</label><input value={customNcndaAckName} onChange={e => setCustomNcndaAckName(e.target.value)} placeholder="Full name of signatory" /></div>
+                  </div>
+                )}
+                {myCompany?.type === "buyer" && (
+                  <div className="gnt-card" style={{ marginBottom: 16 }}>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, cursor: "pointer" }}>
+                      <input type="checkbox" checked={bolRequested} onChange={e => setBolRequested(e.target.checked)} style={{ marginTop: 3 }} />
+                      <span>Request BOL terms for the first load (payment after loading rather than before) — optional, non-binding. The seller may accept or decline directly with you.</span>
+                    </label>
+                    {bolRequested && (
+                      <div className="gnt-field" style={{ marginTop: 10 }}>
+                        <label>Note to seller (optional)</label>
+                        <textarea rows={2} value={bolNote} onChange={e => setBolNote(e.target.value)} placeholder="e.g. First time trading together — happy to provide references." />
+                      </div>
+                    )}
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 10 }}>
