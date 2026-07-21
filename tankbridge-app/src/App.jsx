@@ -491,6 +491,9 @@ export default function App() {
   const [ncndaAgree, setNcndaAgree] = useState(false);
   const [ncndaName, setNcndaName] = useState("");
   const [ncndaScrolledEnd, setNcndaScrolledEnd] = useState(false);
+  const [useCustomNcnda, setUseCustomNcnda] = useState(false);
+  const [customNcndaFile, setCustomNcndaFile] = useState(null);
+  const [customNcndaSubmitting, setCustomNcndaSubmitting] = useState(false);
   const [regError, setRegError] = useState("");
 
   const [listingForm, setListingForm] = useState(EMPTY_LISTING);
@@ -526,6 +529,10 @@ export default function App() {
   const [acceptStep, setAcceptStep] = useState(1);
   const [acceptError, setAcceptError] = useState("");
   const [revealedInfo, setRevealedInfo] = useState(null);
+  const [customNcndaUrl, setCustomNcndaUrl] = useState(null);
+  const [customNcndaLoading, setCustomNcndaLoading] = useState(false);
+  const [customNcndaAgree, setCustomNcndaAgree] = useState(false);
+  const [customNcndaAckName, setCustomNcndaAckName] = useState("");
 
   const [adminTab, setAdminTab] = useState("pending");
   const [detailCompany, setDetailCompany] = useState(null);
@@ -788,6 +795,43 @@ export default function App() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) setNcndaScrolledEnd(true);
   }
 
+  async function createInitialListingOrReferral(companyId) {
+    const resolvedLocation = regForm.tradeLocation === "Other" ? regForm.tradeLocationOther.trim() : regForm.tradeLocation;
+    if (regType !== "broker") {
+      const { error: listingError } = await supabase.from("listings").insert({
+        company_id: companyId,
+        kind: regType === "seller" ? "sell" : "buy",
+        product: regForm.product,
+        volume: Number(regForm.tradeVolume),
+        unit_price: Number(regForm.tradePrice),
+        terms: regForm.tradeTerms,
+        location: resolvedLocation,
+        availability: "Immediate",
+        status: "pending",
+      });
+      if (listingError) console.error("initial listing insert error", listingError);
+    }
+    if (regType === "broker") {
+      const { error: refError } = await supabase.from("referrals").insert({
+        broker_company_id: companyId,
+        referred_type: regForm.referredType,
+        referred_company_name: regForm.referredCompanyName,
+        referred_cipc: regForm.referredCipc,
+        referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
+        referred_email: regForm.referredEmail,
+        product: regForm.product,
+        volume: Number(regForm.tradeVolume),
+        unit_price: Number(regForm.tradePrice),
+        location: resolvedLocation,
+        terms: regForm.tradeTerms,
+        agreement_accepted: true,
+        agreement_accepted_by: ncndaName,
+        agreement_accepted_at: new Date().toISOString(),
+      });
+      if (refError) console.error("referral insert error", refError);
+    }
+  }
+
   async function finalizeRegistration(e) {
     e.preventDefault();
     if (!ncndaAgree || ncndaName.trim().length < 3) { setRegError("Please accept the NCNDA and enter your full name."); return; }
@@ -816,49 +860,55 @@ export default function App() {
 
     // Buyers/sellers get their signup volume/price/location auto-published as their first listing
     // (this listing flips to active automatically when admin approves the company)
-    if (regType !== "broker") {
-      const { error: listingError } = await supabase.from("listings").insert({
-        company_id: data.id,
-        kind: regType === "seller" ? "sell" : "buy",
-        product: regForm.product,
-        volume: Number(regForm.tradeVolume),
-        unit_price: Number(regForm.tradePrice),
-        terms: regForm.tradeTerms,
-        location: resolvedLocation,
-        availability: "Immediate",
-        status: "pending",
-      });
-      if (listingError) console.error("initial listing insert error", listingError);
-    }
-
-    // Brokers submit their first referral (buyer or seller) as part of registration —
-    // it goes to admin for CIPC/DMRE verification, same as any later referral from their Dashboard.
-    if (regType === "broker") {
-      const { error: refError } = await supabase.from("referrals").insert({
-        broker_company_id: data.id,
-        referred_type: regForm.referredType,
-        referred_company_name: regForm.referredCompanyName,
-        referred_cipc: regForm.referredCipc,
-        referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
-        referred_email: regForm.referredEmail,
-        product: regForm.product,
-        volume: Number(regForm.tradeVolume),
-        unit_price: Number(regForm.tradePrice),
-        location: resolvedLocation,
-        terms: regForm.tradeTerms,
-        agreement_accepted: true,
-        agreement_accepted_by: ncndaName,
-        agreement_accepted_at: new Date().toISOString(),
-      });
-      if (refError) console.error("referral insert error", refError);
-    }
+    await createInitialListingOrReferral(data.id);
 
     setMyCompany(data);
     setRegStep("done");
     showToast("Registration submitted — Tankbridge admin has been notified.");
   }
 
-  function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); setNcndaAgree(false); setNcndaScrolledEnd(false); goto("register"); }
+  async function submitCustomNcndaRegistration(e) {
+    e.preventDefault();
+    if (!customNcndaFile) { setRegError("Please upload your signed NCNDA document."); return; }
+    if (!session) { setRegError("You need to be logged in."); return; }
+    setRegError("");
+    setCustomNcndaSubmitting(true);
+    const resolvedLocation = regForm.tradeLocation === "Other" ? regForm.tradeLocationOther.trim() : regForm.tradeLocation;
+    const { data, error } = await supabase.from("companies").insert({
+      user_id: session.user.id,
+      type: regType,
+      company_name: regForm.companyName,
+      cipc: regForm.cipc || null,
+      dmre_license: regType === "seller" ? regForm.dmreLicense : null,
+      ownership_capacity: regType === "broker" ? null : regForm.ownershipCapacity,
+      address: regForm.address || null,
+      contact_name: regForm.contactName,
+      phone: regForm.phone,
+      email: regForm.email,
+      trade_volume: regType === "broker" ? null : Number(regForm.tradeVolume),
+      trade_price: regType === "broker" ? null : Number(regForm.tradePrice),
+      trade_location: regType === "broker" ? null : resolvedLocation,
+      trade_terms: regType === "broker" ? null : regForm.tradeTerms,
+      ncnda_signed: false,
+      ncnda_source: "custom",
+      custom_ncnda_status: "pending",
+    }).select().single();
+    if (error) { setCustomNcndaSubmitting(false); setRegError(error.message); return; }
+
+    const path = `${session.user.id}/custom_ncnda/${Date.now()}-${customNcndaFile.name}`;
+    const { error: upErr } = await supabase.storage.from("company-docs").upload(path, customNcndaFile);
+    if (upErr) { setCustomNcndaSubmitting(false); setRegError(`Company registered, but the file failed to upload: ${upErr.message}. You can upload it again from your Dashboard.`); setMyCompany(data); setRegStep("done"); return; }
+    await supabase.from("company_documents").insert({ company_id: data.id, doc_type: "custom_ncnda", file_path: path, file_name: customNcndaFile.name });
+
+    await createInitialListingOrReferral(data.id);
+
+    setCustomNcndaSubmitting(false);
+    setMyCompany(data);
+    setRegStep("done");
+    showToast("Custom NCNDA submitted — admin will review it before your registration proceeds.");
+  }
+
+  function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); setNcndaAgree(false); setNcndaScrolledEnd(false); setUseCustomNcnda(false); setCustomNcndaFile(null); goto("register"); }
 
   // ---------- LISTINGS (dashboard) ----------
   function updateListingField(field, value) { setListingForm(f => ({ ...f, [field]: value })); }
@@ -1104,11 +1154,36 @@ export default function App() {
     .filter(l => marketFilter.product === "all" || l.product === marketFilter.product)
     .filter(l => marketFilter.terms === "all" || (Array.isArray(l.terms) ? l.terms.includes(marketFilter.terms) : l.terms === marketFilter.terms));
 
-  function openAccept(listing) { setAcceptTarget(listing); setAcceptStep(1); setAcceptError(""); }
+  function openAccept(listing) {
+    setAcceptTarget(listing);
+    setAcceptStep(1);
+    setAcceptError("");
+    setCustomNcndaUrl(null);
+    setCustomNcndaAgree(false);
+    setCustomNcndaAckName("");
+    if (listing.ncnda_source === "custom") {
+      setCustomNcndaLoading(true);
+      (async () => {
+        const { data: path } = await supabase.rpc("get_custom_ncnda_path", { p_company_id: listing.company_id });
+        if (path) {
+          const { data: signed } = await supabase.storage.from("company-docs").createSignedUrl(path, 600);
+          setCustomNcndaUrl(signed?.signedUrl || null);
+        }
+        setCustomNcndaLoading(false);
+      })();
+    }
+  }
 
   async function submitAccept() {
     if (!session) { setAcceptError("You need to be logged in."); return; }
-    const { data: deal, error } = await supabase.rpc("accept_listing_price", { p_listing_id: acceptTarget.id });
+    if (acceptTarget.ncnda_source === "custom" && (!customNcndaAgree || customNcndaAckName.trim().length < 3)) {
+      setAcceptError("Please review the listing owner's custom NCNDA, tick agree, and enter your full name.");
+      return;
+    }
+    const { data: deal, error } = await supabase.rpc("accept_listing_price", {
+      p_listing_id: acceptTarget.id,
+      p_custom_ncnda_ack_by: acceptTarget.ncnda_source === "custom" ? customNcndaAckName : null,
+    });
     if (error) { setAcceptError(error.message); return; }
     const isSellListing = acceptTarget.kind !== "buy";
     let reveal;
@@ -1147,6 +1222,19 @@ export default function App() {
   async function loadDetailDocuments(companyId) {
     const { data } = await supabase.from("company_documents").select("*").eq("company_id", companyId).order("uploaded_at", { ascending: false });
     setDetailDocuments(data || []);
+  }
+
+  async function reviewCustomNcnda(company, approved) {
+    const { error } = await supabase.rpc("approve_custom_ncnda", { p_company_id: company.id, p_approved: approved });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    setDetailCompany(c => c && ({
+      ...c,
+      custom_ncnda_status: approved ? "approved" : "rejected",
+      ncnda_signed: approved ? true : c.ncnda_signed,
+      ncnda_signed_by: approved ? "Custom NCNDA (uploaded by company, approved by admin)" : c.ncnda_signed_by,
+    }));
+    showToast(approved ? "Custom NCNDA approved — company can now be approved." : "Custom NCNDA rejected.");
   }
 
   async function viewCompanyDoc(doc) {
@@ -1775,7 +1863,29 @@ export default function App() {
           {regStep === "ncnda" && (
             <>
               <h2 style={{ fontSize: 30, marginBottom: 6 }}>NCNDA — Non-Circumvention, Non-Disclosure &amp; Fee Protection Agreement</h2>
-              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 18 }}>Required for buyers, sellers and brokers before admin approval. Please scroll to the end to enable agreement.</p>
+              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 14 }}>Required for buyers, sellers and brokers before admin approval. Please scroll to the end to enable agreement.</p>
+
+              <div className="gnt-type-toggle" style={{ marginBottom: 18, maxWidth: 480 }}>
+                <button className={!useCustomNcnda ? "active" : ""} type="button" onClick={() => setUseCustomNcnda(false)}>Use Tankbridge's NCNDA</button>
+                <button className={useCustomNcnda ? "active" : ""} type="button" onClick={() => setUseCustomNcnda(true)}>Use my own NCNDA form</button>
+              </div>
+
+              {useCustomNcnda ? (
+                <form onSubmit={submitCustomNcndaRegistration}>
+                  <div className="gnt-card" style={{ marginBottom: 18 }}>
+                    <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 14 }}>Upload your own company's NCNDA, already signed on your side. Tankbridge admin will review it — your registration will proceed to full approval once it's accepted. If it's rejected, you can resubmit or switch to Tankbridge's standard NCNDA instead.</p>
+                    {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
+                    <div className="gnt-field">
+                      <label>Signed NCNDA document</label>
+                      <input type="file" onChange={e => setCustomNcndaFile(e.target.files?.[0] || null)} />
+                    </div>
+                  </div>
+                  <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }} disabled={customNcndaSubmitting}>
+                    {customNcndaSubmitting ? "Submitting…" : "Submit custom NCNDA for review"} <FileSignature size={16} />
+                  </button>
+                </form>
+              ) : (
+                <>
               <div className="gnt-doc-box" onScroll={handleNcndaScroll} style={{ maxHeight: 320 }}>
                 <h4>1. Parties and Purpose</h4>
                 <p>This Non-Circumvention, Non-Disclosure, and Fee Protection Agreement (the "Agreement") is entered into by and between Tankbridge (acting as the "Intermediary" and trading platform), and the registered platform user, whether acting as a Buyer, Seller, or representative thereof — in this registration, <strong>{regForm.companyName || "the registering party"}</strong> (the "Party").</p>
@@ -1818,6 +1928,8 @@ export default function App() {
                 <div className="gnt-field" style={{ marginTop: 16 }}><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
                 <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }}>Accept &amp; submit registration <FileSignature size={16} /></button>
               </form>
+              </>
+              )}
             </>
           )}
 
@@ -2616,6 +2728,22 @@ export default function App() {
               <div style={{ gridColumn: "1 / -1" }}>
                 <div className="dt">NCNDA</div>
                 <div className="dd" style={{ fontFamily: "Inter" }}>{detailCompany.ncnda_signed ? `Signed by ${detailCompany.ncnda_signed_by} on ${fmtDate(detailCompany.ncnda_signed_at)}` : "Not yet signed — cannot approve"}</div>
+                {detailCompany.ncnda_source === "custom" && (
+                  <div style={{ marginTop: 6 }}>
+                    <span className={`gnt-badge ${detailCompany.custom_ncnda_status === "approved" ? "approved" : detailCompany.custom_ncnda_status === "rejected" ? "rejected" : "pending"}`}>
+                      Custom NCNDA — {detailCompany.custom_ncnda_status}
+                    </span>
+                    {detailDocuments.filter(d => d.doc_type === "custom_ncnda").map(d => (
+                      <button key={d.id} className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginLeft: 8 }} onClick={() => viewCompanyDoc(d)}>View document</button>
+                    ))}
+                    {detailCompany.custom_ncnda_status === "pending" && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => reviewCustomNcnda(detailCompany, true)}>Approve custom NCNDA</button>
+                        <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => reviewCustomNcnda(detailCompany, false)}>Reject</button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               {detailCompany.type === "seller" && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -2716,8 +2844,30 @@ export default function App() {
                       ))
                     : <p style={{ color: "var(--steel-soft)" }}>No procedure has been provided for this listing yet.</p>}
                 </div>
+                {acceptTarget.ncnda_source === "custom" && (
+                  <div className="gnt-card" style={{ marginBottom: 16 }}>
+                    <h4 style={{ fontSize: 14, marginBottom: 6 }}>This listing owner uses their own NCNDA</h4>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>You'll need to review and agree to it before accepting this price — it governs this specific counterparty relationship.</p>
+                    {customNcndaLoading ? (
+                      <p style={{ fontSize: 13 }}>Loading document…</p>
+                    ) : customNcndaUrl ? (
+                      <a href={customNcndaUrl} target="_blank" rel="noreferrer" className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginBottom: 12, display: "inline-flex" }}>View their NCNDA <ChevronRight size={13} /></a>
+                    ) : (
+                      <p style={{ fontSize: 13, color: "var(--alert)" }}>Could not load their NCNDA document. Please try again or contact admin.</p>
+                    )}
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, marginBottom: 10, cursor: "pointer" }}>
+                      <input type="checkbox" checked={customNcndaAgree} onChange={e => setCustomNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
+                      <span>I have read and agree to be bound by the listing owner's NCNDA above.</span>
+                    </label>
+                    <div className="gnt-field"><label>Type your full legal name to sign</label><input value={customNcndaAckName} onChange={e => setCustomNcndaAckName(e.target.value)} placeholder="Full name of signatory" /></div>
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button className="gnt-btn gnt-btn-amber" onClick={() => setAcceptStep(2)}>Accept procedure <ChevronRight size={15} /></button>
+                  <button
+                    className="gnt-btn gnt-btn-amber"
+                    disabled={acceptTarget.ncnda_source === "custom" && (!customNcndaAgree || customNcndaAckName.trim().length < 3)}
+                    onClick={() => setAcceptStep(2)}
+                  >Accept procedure <ChevronRight size={15} /></button>
                   <button className="gnt-btn gnt-btn-ghost" onClick={() => setAcceptTarget(null)}>Cancel</button>
                 </div>
               </>
