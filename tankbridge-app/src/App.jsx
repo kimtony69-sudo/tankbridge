@@ -67,6 +67,7 @@ const EMPTY_REG = {
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "0.10",
+  hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerSplitPct: "0.50",
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered" };
 const EMPTY_REFERRAL = {
@@ -74,6 +75,7 @@ const EMPTY_REFERRAL = {
   referredContactName: "", referredPhone: "", referredEmail: "",
   product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: [], notes: "",
   proposedCommissionRate: "0.10",
+  hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerSplitPct: "0.50",
 };
 
 function toggleTerm(list, term) {
@@ -489,6 +491,16 @@ export default function App() {
     return null;
   })();
 
+  const coBrokerClaimParams = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("co_broker_claim") === "1" && p.get("token")) {
+        return { token: p.get("token") };
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+
   const requestedView = (() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -497,7 +509,19 @@ export default function App() {
     } catch { return null; }
   })();
 
-  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : requestedView || "landing");
+  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : coBrokerClaimParams ? "co_broker_claim" : requestedView || "landing");
+  const [coBrokerClaimData, setCoBrokerClaimData] = useState(null);
+  const [coBrokerClaimLoading, setCoBrokerClaimLoading] = useState(true);
+  const [coBrokerClaimError, setCoBrokerClaimError] = useState("");
+  const [coBrokerClaimResult, setCoBrokerClaimResult] = useState(null);
+  const [showCoBrokerDeclineForm, setShowCoBrokerDeclineForm] = useState(false);
+  const [coBrokerDeclineReason, setCoBrokerDeclineReason] = useState("");
+  const [coBrokerClaimForm, setCoBrokerClaimForm] = useState({
+    companyName: "", cipc: "", email: "", contactName: "", phone: "",
+    product: "", volume: "", unitPrice: "", location: "", terms: [], notes: "", commissionRate: "0.10",
+  });
+  const [coBrokerClaimSubmitting, setCoBrokerClaimSubmitting] = useState(false);
+  const [coBrokerClaimLicenseFile, setCoBrokerClaimLicenseFile] = useState(null);
   const [referralConfirmData, setReferralConfirmData] = useState(null);
   const [referralConfirmLoading, setReferralConfirmLoading] = useState(true);
   const [referralConfirmResult, setReferralConfirmResult] = useState(null);
@@ -683,6 +707,71 @@ export default function App() {
     setReferralConfirmResult({ approved, referral: data });
   }
 
+  // ---------- CO-BROKER HANDOFF CLAIM (broker login required) ----------
+  useEffect(() => {
+    if (!coBrokerClaimParams) { setCoBrokerClaimLoading(false); return; }
+    (async () => {
+      const { data, error } = await supabase.rpc("get_co_broker_claim_by_token", { p_token: coBrokerClaimParams.token });
+      if (error || !data || data.length === 0) { setCoBrokerClaimError("This link is invalid or has expired."); setCoBrokerClaimLoading(false); return; }
+      setCoBrokerClaimData(data[0]);
+      setCoBrokerClaimForm(f => ({
+        ...f,
+        companyName: data[0].referred_company_name || "",
+        product: data[0].product || "",
+        volume: String(data[0].volume || ""),
+        unitPrice: String(data[0].unit_price || ""),
+        location: data[0].location || "",
+        terms: data[0].terms || [],
+        commissionRate: data[0].proposed_commission_rate ? String(data[0].proposed_commission_rate) : "0.10",
+      }));
+      setCoBrokerClaimLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function submitCoBrokerDecline() {
+    const { error } = await supabase.rpc("decline_co_broker_claim", { p_token: coBrokerClaimParams.token, p_reason: coBrokerDeclineReason || null });
+    if (error) { setCoBrokerClaimError(error.message); return; }
+    setCoBrokerClaimResult({ declined: true });
+  }
+
+  async function submitCoBrokerClaim(e) {
+    e.preventDefault();
+    if (!session || myCompany?.type !== "broker") { setCoBrokerClaimError("Please log in with your Tankbridge broker account first, then reopen this link."); return; }
+    const f = coBrokerClaimForm;
+    if (!f.companyName || !f.email || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
+      setCoBrokerClaimError("Please complete all required fields."); return;
+    }
+    if (coBrokerClaimData.referred_type === "buyer" && !f.cipc) { setCoBrokerClaimError("Please enter the buyer's CIPC number."); return; }
+    if (coBrokerClaimData.referred_type === "seller" && !coBrokerClaimLicenseFile) { setCoBrokerClaimError("Please upload a copy of the seller's Wholesale License."); return; }
+    setCoBrokerClaimSubmitting(true);
+    setCoBrokerClaimError("");
+    const { data, error } = await supabase.rpc("claim_co_broker_referral", {
+      p_token: coBrokerClaimParams.token,
+      p_company_name: f.companyName,
+      p_cipc: coBrokerClaimData.referred_type === "buyer" ? f.cipc : null,
+      p_email: f.email,
+      p_contact_name: f.contactName || null,
+      p_phone: f.phone || null,
+      p_product: f.product,
+      p_volume: Number(f.volume),
+      p_unit_price: Number(f.unitPrice),
+      p_location: f.location,
+      p_terms: f.terms,
+      p_notes: f.notes || null,
+      p_commission_rate: coBrokerClaimData.referred_type === "seller" ? Number(f.commissionRate) : null,
+    });
+    if (error) { setCoBrokerClaimSubmitting(false); setCoBrokerClaimError(error.message); return; }
+    if (coBrokerClaimData.referred_type === "seller" && coBrokerClaimLicenseFile) {
+      const path = `${session.user.id}/referral_wholesale_license/${data.id}-${coBrokerClaimLicenseFile.name}`;
+      const { error: upErr } = await supabase.storage.from("company-docs").upload(path, coBrokerClaimLicenseFile);
+      if (!upErr) await supabase.from("referrals").update({ wholesale_license_path: path }).eq("id", data.id);
+    }
+    setCoBrokerClaimSubmitting(false);
+    setCoBrokerClaimResult({ claimed: true });
+    await loadMyReferrals();
+  }
+
   function updateInviteField(field, value) { setInviteForm(f => ({ ...f, [field]: value })); }
 
   async function submitInviteAccount(e) {
@@ -855,6 +944,19 @@ export default function App() {
     }
 
     if (regType === "broker") {
+      if (!regForm.hasDirectRelationship) {
+        if (!regForm.referredCompanyName) return "Please enter the company's name (best known).";
+        if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
+        if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
+        if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
+        if (!regForm.tradeTerms || regForm.tradeTerms.length === 0) return "Select at least one trading term.";
+        if (!regForm.upstreamBrokerName || !regForm.upstreamBrokerEmail || !/^\S+@\S+\.\S+$/.test(regForm.upstreamBrokerEmail)) {
+          return "Please enter the upstream broker/mandate's name and a valid email.";
+        }
+        const split = Number(regForm.coBrokerSplitPct);
+        if (isNaN(split) || split <= 0 || split >= 1) return "Split must be a share between 0 and 1 (e.g. 0.50 for 50%).";
+        return "";
+      }
       if (!regForm.referredCompanyName) return "Please enter the referred company's name.";
       if (regForm.referredType === "buyer" && !regForm.referredCipc) return "Please enter the buyer's CIPC registration number.";
       if (!regForm.referredEmail || !/^\S+@\S+\.\S+$/.test(regForm.referredEmail)) return "A valid email for the referred company is required — Tankbridge will invite them to register directly.";
@@ -926,6 +1028,27 @@ export default function App() {
         status: "pending",
       });
       if (listingError) console.error("initial listing insert error", listingError);
+    }
+    if (regType === "broker" && !regForm.hasDirectRelationship) {
+      const { error: refError } = await supabase.from("referrals").insert({
+        broker_company_id: companyId,
+        referred_type: regForm.referredType,
+        referred_company_name: regForm.referredCompanyName,
+        product: regForm.product,
+        volume: Number(regForm.tradeVolume),
+        unit_price: Number(regForm.tradePrice),
+        location: resolvedLocation,
+        terms: regForm.tradeTerms,
+        is_co_broker_referral: true,
+        co_broker_upstream_name: regForm.upstreamBrokerName,
+        co_broker_upstream_email: regForm.upstreamBrokerEmail,
+        co_broker_split_pct: Number(regForm.coBrokerSplitPct),
+        agreement_accepted: true,
+        agreement_accepted_by: ncndaName,
+        agreement_accepted_at: new Date().toISOString(),
+      });
+      if (refError) console.error("co-broker referral insert error", refError);
+      return;
     }
     if (regType === "broker") {
       const { data: refData, error: refError } = await supabase.from("referrals").insert({
@@ -1253,6 +1376,21 @@ export default function App() {
   function submitReferral(e) {
     e.preventDefault();
     const f = referralForm;
+    if (!f.hasDirectRelationship) {
+      if (!f.referredCompanyName || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
+        setReferralError("Please complete all required fields."); return;
+      }
+      if (!f.upstreamBrokerName || !f.upstreamBrokerEmail || !/^\S+@\S+\.\S+$/.test(f.upstreamBrokerEmail)) {
+        setReferralError("Please enter the upstream broker's name and a valid email."); return;
+      }
+      const split = Number(f.coBrokerSplitPct);
+      if (isNaN(split) || split <= 0 || split >= 1) { setReferralError("Split must be a share between 0 and 1 (e.g. 0.50 for 50%)."); return; }
+      if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
+      if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
+      setReferralError("");
+      setReferralConfirmOpen(true);
+      return;
+    }
     if (!f.referredCompanyName || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
       setReferralError("Please complete all required fields."); return;
     }
@@ -1278,6 +1416,36 @@ export default function App() {
   async function confirmSubmitReferral() {
     const f = referralForm;
     const resolvedLocation = f.location === "Other" ? f.locationOther.trim() : f.location;
+
+    if (!f.hasDirectRelationship) {
+      const { error } = await supabase.from("referrals").insert({
+        broker_company_id: myCompany.id,
+        referred_type: f.referredType,
+        referred_company_name: f.referredCompanyName,
+        product: f.product,
+        volume: Number(f.volume),
+        unit_price: Number(f.unitPrice),
+        location: resolvedLocation,
+        terms: f.terms,
+        notes: f.notes,
+        is_co_broker_referral: true,
+        co_broker_upstream_name: f.upstreamBrokerName,
+        co_broker_upstream_email: f.upstreamBrokerEmail,
+        co_broker_split_pct: Number(f.coBrokerSplitPct),
+        agreement_accepted: true,
+        agreement_accepted_by: referralName,
+        agreement_accepted_at: new Date().toISOString(),
+      });
+      setReferralConfirmOpen(false);
+      if (error) { setReferralError(error.message); return; }
+      setReferralForm(EMPTY_REFERRAL);
+      setReferralAgree(false);
+      setReferralName("");
+      await loadMyReferrals();
+      showToast("Handoff request submitted — admin will verify, then contact the upstream broker to confirm.");
+      return;
+    }
+
     const { data, error } = await supabase.from("referrals").insert({
       broker_company_id: myCompany.id,
       referred_type: f.referredType,
@@ -1536,7 +1704,16 @@ export default function App() {
   async function setReferralStatus(referral, status) {
     const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
-    if (status === "approved" && referral.referred_type === "seller") {
+    if (status === "approved" && referral.is_co_broker_referral) {
+      const res = await fetch("/api/send-co-broker-claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ referralId: referral.id }),
+      }).catch(() => null);
+      showToast(res && res.ok
+        ? `Verified — the upstream broker has been emailed to confirm the relationship.`
+        : `Verified, but the confirmation email failed to send. Use "Resend confirmation" below.`, res && res.ok ? "ok" : "err");
+    } else if (status === "approved" && referral.referred_type === "seller") {
       const res = await fetch("/api/send-referral-confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1552,6 +1729,16 @@ export default function App() {
     }
     await loadAdminData();
     await loadMarketBoard();
+  }
+
+  async function resendCoBrokerClaim(referral) {
+    const res = await fetch("/api/send-co-broker-claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ referralId: referral.id }),
+    }).catch(() => null);
+    if (res && res.ok) { showToast("Confirmation email resent."); await loadAdminData(); }
+    else { showToast("Failed to send confirmation email.", "err"); }
   }
 
   async function resendReferralInvite(referral) {
@@ -1729,6 +1916,101 @@ export default function App() {
                 </div>
               )}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================== CO-BROKER HANDOFF CLAIM (broker login required) ===================== */}
+      {view === "co_broker_claim" && (
+        <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 620, margin: "0 auto" }}>
+          {coBrokerClaimLoading ? (
+            <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
+          ) : coBrokerClaimError && !coBrokerClaimData ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Link not found</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>{coBrokerClaimError}</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : coBrokerClaimResult ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              {coBrokerClaimResult.claimed ? (
+                <>
+                  <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Submitted for verification</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Tankbridge admin will verify your details, same as any referral. Check "My referrals" on your Dashboard for progress.</p>
+                  <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("dashboard")}>Go to my Dashboard</button>
+                </>
+              ) : (
+                <>
+                  <XCircle size={40} color="#a63b32" style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Thanks for letting us know</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>The introducing broker has been notified that this wasn't a match.</p>
+                  <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+                </>
+              )}
+            </div>
+          ) : coBrokerClaimData?.co_broker_status !== "pending" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Already responded to</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>This link has already been used.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : !session || myCompany?.type !== "broker" ? (
+            <div className="gnt-card" style={{ padding: "32px 28px" }}>
+              <h2 style={{ fontSize: 22, marginBottom: 10 }}>Log in with your broker account</h2>
+              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}><strong>{coBrokerClaimData.originating_broker_name}</strong> says you have a direct relationship with a {coBrokerClaimData.referred_type}. To confirm and register them, please log in with your Tankbridge broker account (or register one if you don't have one yet), then reopen this same link.</p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="gnt-btn gnt-btn-amber" onClick={() => goto("landing")}>Log in / Register</button>
+                <button className="gnt-btn gnt-btn-ghost" onClick={() => setShowCoBrokerDeclineForm(true)}>I don't know this company</button>
+              </div>
+              {showCoBrokerDeclineForm && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+                  <div className="gnt-field"><label>Reason (optional)</label><textarea rows={2} value={coBrokerDeclineReason} onChange={e => setCoBrokerDeclineReason(e.target.value)} /></div>
+                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={submitCoBrokerDecline}>Confirm decline</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <form onSubmit={submitCoBrokerClaim} className="gnt-card" style={{ padding: "32px 28px" }}>
+              <h2 style={{ fontSize: 22, marginBottom: 6 }}>Confirm and register this {coBrokerClaimData.referred_type}</h2>
+              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}><strong>{coBrokerClaimData.originating_broker_name}</strong> introduced this — please correct any details below with what you actually know, since you're vouching for it. You'll split the 30% commission {Math.round((1 - coBrokerClaimData.co_broker_split_pct) * 100)}% you / {Math.round(coBrokerClaimData.co_broker_split_pct * 100)}% {coBrokerClaimData.originating_broker_name}.</p>
+              {coBrokerClaimError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {coBrokerClaimError}</div>}
+              <div className="gnt-field"><label>Company name</label><input value={coBrokerClaimForm.companyName} onChange={e => setCoBrokerClaimForm(f => ({ ...f, companyName: e.target.value }))} /></div>
+              {coBrokerClaimData.referred_type === "buyer" ? (
+                <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={coBrokerClaimForm.cipc} onChange={e => setCoBrokerClaimForm(f => ({ ...f, cipc: e.target.value }))} /></div>
+              ) : (
+                <div className="gnt-field">
+                  <label>Copy of Wholesale License</label>
+                  <FileInput onChange={e => setCoBrokerClaimLicenseFile(e.target.files?.[0] || null)} />
+                </div>
+              )}
+              <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={coBrokerClaimForm.email} onChange={e => setCoBrokerClaimForm(f => ({ ...f, email: e.target.value }))} /></div>
+              {coBrokerClaimData.referred_type === "seller" && (
+                <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={coBrokerClaimForm.commissionRate} onChange={e => setCoBrokerClaimForm(f => ({ ...f, commissionRate: e.target.value }))} /></div>
+              )}
+              <div className="gnt-grid2">
+                <div className="gnt-field"><label>Contact person (optional)</label><input value={coBrokerClaimForm.contactName} onChange={e => setCoBrokerClaimForm(f => ({ ...f, contactName: e.target.value }))} /></div>
+                <div className="gnt-field"><label>Phone (optional)</label><input value={coBrokerClaimForm.phone} onChange={e => setCoBrokerClaimForm(f => ({ ...f, phone: e.target.value }))} /></div>
+              </div>
+              <div className="gnt-grid2">
+                <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" value={coBrokerClaimForm.volume} onChange={e => setCoBrokerClaimForm(f => ({ ...f, volume: e.target.value }))} /></div>
+                <div className="gnt-field"><label>Price (R / litre)</label><input type="number" step="0.01" value={coBrokerClaimForm.unitPrice} onChange={e => setCoBrokerClaimForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
+              </div>
+              <div className="gnt-field"><label>Location</label><input value={coBrokerClaimForm.location} onChange={e => setCoBrokerClaimForm(f => ({ ...f, location: e.target.value }))} /></div>
+              <div className="gnt-field"><label>Terms</label><TermsCheckboxGroup value={coBrokerClaimForm.terms} onChange={v => setCoBrokerClaimForm(f => ({ ...f, terms: v }))} /></div>
+              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                <button className="gnt-btn gnt-btn-amber" type="submit" disabled={coBrokerClaimSubmitting}>{coBrokerClaimSubmitting ? "Submitting…" : "Confirm & submit for verification"}</button>
+                <button className="gnt-btn gnt-btn-ghost" type="button" onClick={() => setShowCoBrokerDeclineForm(true)}>I don't know this company</button>
+              </div>
+              {showCoBrokerDeclineForm && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+                  <div className="gnt-field"><label>Reason (optional)</label><textarea rows={2} value={coBrokerDeclineReason} onChange={e => setCoBrokerDeclineReason(e.target.value)} /></div>
+                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" type="button" onClick={submitCoBrokerDecline}>Confirm decline</button>
+                </div>
+              )}
+            </form>
           )}
         </div>
       )}
@@ -2102,8 +2384,22 @@ export default function App() {
                       <button type="button" className={regForm.referredType === "seller" ? "active" : ""} onClick={() => updateReg("referredType", "seller")}>Referring a Seller</button>
                       <button type="button" className={regForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReg("referredType", "buyer")}>Referring a Buyer</button>
                     </div>
-                    <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={regForm.referredCompanyName} onChange={e => updateReg("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
-                    {regForm.referredType === "buyer" ? (
+                    <div className="gnt-type-toggle" style={{ marginBottom: 18 }}>
+                      <button type="button" className={regForm.hasDirectRelationship ? "active" : ""} onClick={() => updateReg("hasDirectRelationship", true)}>I know them directly</button>
+                      <button type="button" className={!regForm.hasDirectRelationship ? "active" : ""} onClick={() => updateReg("hasDirectRelationship", false)}>I don't — hand off to who does</button>
+                    </div>
+                    {!regForm.hasDirectRelationship && (
+                      <div className="gnt-card" style={{ marginBottom: 16 }}>
+                        <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Tankbridge will contact the broker/mandate below to confirm they actually have this relationship and complete the real registration. You're credited a share of the commission once they do — no company email/CIPC needed from you here.</p>
+                        <div className="gnt-grid2">
+                          <div className="gnt-field"><label>Upstream broker/mandate's name</label><input value={regForm.upstreamBrokerName} onChange={e => updateReg("upstreamBrokerName", e.target.value)} /></div>
+                          <div className="gnt-field"><label>Upstream broker/mandate's email</label><input type="email" value={regForm.upstreamBrokerEmail} onChange={e => updateReg("upstreamBrokerEmail", e.target.value)} placeholder="them@brokerco.co.za" /></div>
+                        </div>
+                        <div className="gnt-field"><label>Your share of the 30% broker commission (0–1, e.g. 0.50 = 50%)</label><input type="number" min="0.01" max="0.99" step="0.05" value={regForm.coBrokerSplitPct} onChange={e => updateReg("coBrokerSplitPct", e.target.value)} /></div>
+                      </div>
+                    )}
+                    <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Seller" : "Buyer"} company name{!regForm.hasDirectRelationship && " (best known)"}</label><input value={regForm.referredCompanyName} onChange={e => updateReg("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
+                    {regForm.hasDirectRelationship && (regForm.referredType === "buyer" ? (
                       <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.referredCipc} onChange={e => updateReg("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
                     ) : (
                       <div className="gnt-field">
@@ -2111,9 +2407,11 @@ export default function App() {
                         <FileInput onChange={e => setRegReferralLicenseFile(e.target.files?.[0] || null)} />
                         <div className="hint">Admin will review this and confirm the CIPC and DMRE license numbers before approving.</div>
                       </div>
+                    ))}
+                    {regForm.hasDirectRelationship && (
+                      <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={regForm.referredEmail} onChange={e => updateReg("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
                     )}
-                    <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={regForm.referredEmail} onChange={e => updateReg("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
-                    {regForm.referredType === "seller" && (
+                    {regForm.hasDirectRelationship && regForm.referredType === "seller" && (
                       <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={regForm.proposedCommissionRate} onChange={e => updateReg("proposedCommissionRate", e.target.value)} />
                         <div className="hint">This should already be agreed with the seller directly — it's included in the confirmation email they approve before the listing goes live.</div>
                       </div>
@@ -2722,8 +3020,22 @@ export default function App() {
                       <button type="button" className={referralForm.referredType === "seller" ? "active" : ""} onClick={() => updateReferralField("referredType", "seller")}>Referring a Seller</button>
                       <button type="button" className={referralForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReferralField("referredType", "buyer")}>Referring a Buyer</button>
                     </div>
-                    <div className="gnt-field"><label>{referralForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={referralForm.referredCompanyName} onChange={e => updateReferralField("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
-                    {referralForm.referredType === "buyer" ? (
+                    <div className="gnt-type-toggle" style={{ marginBottom: 18 }}>
+                      <button type="button" className={referralForm.hasDirectRelationship ? "active" : ""} onClick={() => updateReferralField("hasDirectRelationship", true)}>I know them directly</button>
+                      <button type="button" className={!referralForm.hasDirectRelationship ? "active" : ""} onClick={() => updateReferralField("hasDirectRelationship", false)}>I don't — hand off to who does</button>
+                    </div>
+                    {!referralForm.hasDirectRelationship && (
+                      <div className="gnt-card" style={{ marginBottom: 16 }}>
+                        <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Tankbridge will contact the broker below to confirm they actually have this relationship and complete the real registration. You're credited a share of the commission once they do — no company name/CIPC/email needed from you here.</p>
+                        <div className="gnt-grid2">
+                          <div className="gnt-field"><label>Upstream broker's name</label><input value={referralForm.upstreamBrokerName} onChange={e => updateReferralField("upstreamBrokerName", e.target.value)} /></div>
+                          <div className="gnt-field"><label>Upstream broker's email</label><input type="email" value={referralForm.upstreamBrokerEmail} onChange={e => updateReferralField("upstreamBrokerEmail", e.target.value)} placeholder="them@brokerco.co.za" /></div>
+                        </div>
+                        <div className="gnt-field"><label>Your share of the 30% broker commission (0–1, e.g. 0.50 = 50%)</label><input type="number" min="0.01" max="0.99" step="0.05" value={referralForm.coBrokerSplitPct} onChange={e => updateReferralField("coBrokerSplitPct", e.target.value)} /></div>
+                      </div>
+                    )}
+                    <div className="gnt-field"><label>{referralForm.referredType === "seller" ? "Seller" : "Buyer"} company name{!referralForm.hasDirectRelationship && " (best known)"}</label><input value={referralForm.referredCompanyName} onChange={e => updateReferralField("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
+                    {referralForm.hasDirectRelationship && (referralForm.referredType === "buyer" ? (
                       <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={referralForm.referredCipc} onChange={e => updateReferralField("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
                     ) : (
                       <div className="gnt-field">
@@ -2731,18 +3043,24 @@ export default function App() {
                         <FileInput onChange={e => setReferralLicenseFile(e.target.files?.[0] || null)} />
                         <div className="hint">Admin will review this and confirm the CIPC and DMRE license numbers before approving.</div>
                       </div>
-                    )}
-                    {referralForm.referredType === "seller" && (
+                    ))}
+                    {referralForm.hasDirectRelationship && referralForm.referredType === "seller" && (
                       <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={referralForm.proposedCommissionRate} onChange={e => updateReferralField("proposedCommissionRate", e.target.value)} />
                         <div className="hint">This should already be agreed with the seller directly — it's included in the confirmation email they approve before the listing goes live.</div>
                       </div>
                     )}
-                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Once admin approves, Tankbridge emails this company an invite to register their own account — they set their own password and go live once they complete it.</p>
+                    {referralForm.hasDirectRelationship && (
+                      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Once admin approves, Tankbridge emails this company an invite to register their own account — they set their own password and go live once they complete it.</p>
+                    )}
+                    {referralForm.hasDirectRelationship && (
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Contact person (optional)</label><input value={referralForm.referredContactName} onChange={e => updateReferralField("referredContactName", e.target.value)} /></div>
                       <div className="gnt-field"><label>Phone (optional)</label><input value={referralForm.referredPhone} onChange={e => updateReferralField("referredPhone", e.target.value)} placeholder="+27 8x xxx xxxx" /></div>
                     </div>
+                    )}
+                    {referralForm.hasDirectRelationship && (
                     <div className="gnt-field"><label>Email (required — invite is sent here)</label><input type="email" value={referralForm.referredEmail} onChange={e => updateReferralField("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
+                    )}
 
                     <h4 style={{ fontSize: 16, margin: "16px 0 8px" }}>Trade details</h4>
                     <div className="gnt-grid2">
@@ -2793,7 +3111,14 @@ export default function App() {
                             {r.referred_company_name}
                           </div>
                           <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {fmtTerms(r.terms)} · {r.location}</div>
-                          {r.status === "approved" && (
+                          {r.status === "approved" && r.is_co_broker_referral && (
+                            <div style={{ fontSize: 11.5, color: "var(--steel-soft)", marginTop: 4 }}>
+                              {r.co_broker_status === "claimed" ? `Claimed by ${r.co_broker_upstream_name} — you'll be credited ${Math.round(r.co_broker_split_pct * 100)}% of the commission`
+                                : r.co_broker_status === "declined" ? `${r.co_broker_upstream_name} said they don't know this company`
+                                : `Awaiting ${r.co_broker_upstream_name} to confirm this relationship`}
+                            </div>
+                          )}
+                          {r.status === "approved" && !r.is_co_broker_referral && (
                             <div style={{ fontSize: 11.5, color: "var(--steel-soft)", marginTop: 4 }}>
                               {r.invite_status === "accepted"
                                 ? "Registration completed — trading directly now"
@@ -3131,6 +3456,19 @@ export default function App() {
                         <td style={{ fontSize: 11.5 }}>
                           {r.status !== "approved" ? (
                             <span style={{ color: "var(--steel-soft)" }}>—</span>
+                          ) : r.is_co_broker_referral ? (
+                            <>
+                              <span className={`gnt-badge ${r.co_broker_status === "claimed" ? "approved" : r.co_broker_status === "declined" ? "rejected" : "pending"}`}>
+                                {r.co_broker_status === "claimed" ? "Claimed by upstream broker" : r.co_broker_status === "declined" ? "Upstream broker declined" : "Awaiting upstream broker"}
+                              </span>
+                              <p style={{ fontSize: 10.5, color: "var(--steel-soft)", margin: "4px 0" }}>{r.co_broker_upstream_name} ({r.co_broker_upstream_email})</p>
+                              {r.co_broker_status === "declined" && r.co_broker_decline_reason && (
+                                <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>Reason: {r.co_broker_decline_reason}</p>
+                              )}
+                              {r.co_broker_status === "pending" && (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => resendCoBrokerClaim(r)}>Resend confirmation email</button>
+                              )}
+                            </>
                           ) : r.referred_type === "seller" && r.seller_confirm_status !== "approved" ? (
                             <>
                               <span className={`gnt-badge ${r.seller_confirm_status === "rejected" ? "rejected" : "pending"}`}>
