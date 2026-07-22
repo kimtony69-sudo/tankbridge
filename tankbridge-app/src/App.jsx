@@ -374,7 +374,7 @@ function DealCard({ deal, myCompany, onReported }) {
 
   async function report(outcome, reason) {
     setReporting(true);
-    const { error } = await supabase.rpc("report_deal_outcome", { p_deal_id: deal.id, p_outcome: outcome, p_reason: reason || null });
+    const { data, error } = await supabase.rpc("report_deal_outcome", { p_deal_id: deal.id, p_outcome: outcome, p_reason: reason || null });
     setReporting(false);
     if (!error) {
       fetch("/api/notify-deal-report", {
@@ -382,6 +382,11 @@ function DealCard({ deal, myCompany, onReported }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dealId: deal.id, role: isSellerViewing ? "seller" : "buyer", outcome, reason }),
       }).catch(() => {}); // best-effort — don't block the UI if the email fails
+      if (data?.status === "completed") {
+        fetch("/api/notify-broker-commission", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId: deal.id }),
+        }).catch(() => {});
+      }
       setShowReasonPicker(false);
       if (onReported) onReported();
     }
@@ -502,7 +507,7 @@ export default function App() {
   const [inviteReferral, setInviteReferral] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(true);
   const [inviteStep, setInviteStep] = useState("intro"); // intro -> account -> confirm-email -> ncnda -> done
-  const [inviteForm, setInviteForm] = useState({ password: "", confirmPassword: "", contactName: "", phone: "", email: "" });
+  const [inviteForm, setInviteForm] = useState({ password: "", confirmPassword: "", contactName: "", phone: "", email: "", cipc: "", dmreLicense: "" });
   const [inviteError, setInviteError] = useState("");
   const [inviteNcndaAgree, setInviteNcndaAgree] = useState(false);
   const [inviteNcndaName, setInviteNcndaName] = useState("");
@@ -523,7 +528,6 @@ export default function App() {
   const [publicBlacklist, setPublicBlacklist] = useState([]);
   const [adminBlacklist, setAdminBlacklist] = useState([]);
   const [adminBrokerCommissions, setAdminBrokerCommissions] = useState([]);
-  const [adminReferralCompliance, setAdminReferralCompliance] = useState({});
   const [blacklistForm, setBlacklistForm] = useState({ companyName: "", reason: "" });
   const [blacklistError, setBlacklistError] = useState("");
   const [myListings, setMyListings] = useState([]);
@@ -547,6 +551,7 @@ export default function App() {
   const [referralConfirmOpen, setReferralConfirmOpen] = useState(false);
   const [referralLicenseFile, setReferralLicenseFile] = useState(null);
   const [regReferralLicenseFile, setRegReferralLicenseFile] = useState(null);
+  const [regWholesaleLicenseFile, setRegWholesaleLicenseFile] = useState(null);
 
   const [regType, setRegType] = useState("seller");
   const [regStep, setRegStep] = useState("form"); // form -> confirm-email (only if email confirmation required) -> ncnda -> done
@@ -684,6 +689,9 @@ export default function App() {
     e.preventDefault();
     if (!inviteForm.contactName || !inviteForm.phone || !inviteForm.email) { setInviteError("Please complete contact person, phone and email."); return; }
     if (!/^\S+@\S+\.\S+$/.test(inviteForm.email)) { setInviteError("Please enter a valid email address."); return; }
+    if (inviteReferral?.referred_type === "seller" && (!inviteForm.cipc || !inviteForm.dmreLicense)) {
+      setInviteError("Please enter your CIPC registration number and DMRE wholesale license number."); return;
+    }
     if (!session) {
       if (!inviteForm.password || inviteForm.password.length < 6) { setInviteError("Please choose a password of at least 6 characters."); return; }
       if (inviteForm.password !== inviteForm.confirmPassword) { setInviteError("Passwords do not match."); return; }
@@ -713,6 +721,8 @@ export default function App() {
       p_phone: inviteForm.phone,
       p_email: inviteForm.email,
       p_ncnda_signed_by: inviteNcndaName,
+      p_cipc: inviteReferral?.referred_type === "seller" ? inviteForm.cipc : null,
+      p_dmre_license: inviteReferral?.referred_type === "seller" ? inviteForm.dmreLicense : null,
     });
     if (error) { setInviteError(error.message); return; }
     const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
@@ -830,8 +840,12 @@ export default function App() {
       if (!regForm.companyName || !regForm.contactName || !regForm.phone || !regForm.email) {
         return "Please complete company name, contact person, phone and email.";
       }
-    } else if (!regForm.companyName || !regForm.cipc || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email) {
+    } else if (regType === "buyer" && (!regForm.companyName || !regForm.cipc || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email)) {
       return "Please complete all fields (CIPC number is required).";
+    } else if (regType === "seller" && (!regForm.companyName || !regForm.cipc || !regForm.dmreLicense || !regForm.address || !regForm.contactName || !regForm.phone || !regForm.email)) {
+      return "Please complete all fields (CIPC and DMRE license numbers are required).";
+    } else if (regType === "seller" && !regWholesaleLicenseFile) {
+      return "Please upload a copy of your Wholesale License.";
     }
     if (!/^\S+@\S+\.\S+$/.test(regForm.email)) return "Please enter a valid email address.";
 
@@ -856,7 +870,6 @@ export default function App() {
       return "";
     }
 
-    if (regType === "seller" && !regForm.dmreLicense) return "Please enter your DMRE wholesale license number.";
     if (!regForm.ownershipCapacity) return regType === "seller" ? "Please indicate whether you're the Title Holder or a Mandate/Allocation holder." : "Please indicate whether you're funding this directly or via a Funder.";
     if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price you want to trade.";
     if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
@@ -953,6 +966,17 @@ export default function App() {
     }
   }
 
+  async function uploadRegWholesaleLicense(companyId) {
+    if (!regWholesaleLicenseFile) return;
+    const path = `${session.user.id}/wholesale_license/${Date.now()}-${regWholesaleLicenseFile.name}`;
+    const { error: upErr } = await supabase.storage.from("company-docs").upload(path, regWholesaleLicenseFile);
+    if (!upErr) {
+      await supabase.from("company_documents").insert({ company_id: companyId, doc_type: "wholesale_license", file_path: path, file_name: regWholesaleLicenseFile.name });
+    } else {
+      console.error("Wholesale license upload error", upErr);
+    }
+  }
+
   async function finalizeRegistration(e) {
     e.preventDefault();
     if (!ncndaAgree || ncndaName.trim().length < 3) { setRegError("Please accept the NCNDA and enter your full name."); return; }
@@ -962,8 +986,8 @@ export default function App() {
       user_id: session.user.id,
       type: regType,
       company_name: regForm.companyName,
-      cipc: regForm.cipc || null,
-      dmre_license: regType === "seller" ? regForm.dmreLicense : null,
+      cipc: regType === "broker" ? null : (regForm.cipc || null),
+      dmre_license: regType === "seller" ? (regForm.dmreLicense || null) : null,
       ownership_capacity: regType === "broker" ? null : regForm.ownershipCapacity,
       address: regForm.address || null,
       contact_name: regForm.contactName,
@@ -983,6 +1007,7 @@ export default function App() {
     // (this listing flips to active automatically when admin approves the company)
     await createInitialListingOrReferral(data.id);
     if (regType !== "broker") await uploadRegCisKyc(data.id);
+    if (regType === "seller") await uploadRegWholesaleLicense(data.id);
 
     setMyCompany(data);
     setRegStep("done");
@@ -1000,8 +1025,8 @@ export default function App() {
       user_id: session.user.id,
       type: regType,
       company_name: regForm.companyName,
-      cipc: regForm.cipc || null,
-      dmre_license: regType === "seller" ? regForm.dmreLicense : null,
+      cipc: regType === "broker" ? null : (regForm.cipc || null),
+      dmre_license: regType === "seller" ? (regForm.dmreLicense || null) : null,
       ownership_capacity: regType === "broker" ? null : regForm.ownershipCapacity,
       address: regForm.address || null,
       contact_name: regForm.contactName,
@@ -1024,6 +1049,7 @@ export default function App() {
 
     await createInitialListingOrReferral(data.id);
     if (regType !== "broker") await uploadRegCisKyc(data.id);
+    if (regType === "seller") await uploadRegWholesaleLicense(data.id);
 
     setCustomNcndaSubmitting(false);
     setMyCompany(data);
@@ -1447,17 +1473,25 @@ export default function App() {
     if (!amount || amount <= 0) { showToast("Please enter a valid commission amount.", "err"); return; }
     const { error } = await supabase.rpc("set_platform_commission", { p_deal_id: dealId, p_amount: amount });
     if (error) { showToast(error.message, "err"); return; }
+    fetch("/api/notify-broker-commission", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId }),
+    }).catch(() => {});
     await loadAdminData();
-    showToast("Platform commission saved — linked broker commission(s) recalculated automatically.");
+    showToast("Platform commission saved — linked broker commission(s) recalculated and brokers notified.");
   }
 
   async function setDealStatus(dealId, newStatus) {
     const { error } = await supabase.rpc("set_deal_status", { p_deal_id: dealId, p_new_status: newStatus });
     if (error) { showToast(error.message, "err"); return; }
+    if (newStatus === "completed") {
+      fetch("/api/notify-broker-commission", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId }),
+      }).catch(() => {});
+    }
     await loadAdminData();
     await loadMarketBoard();
     showToast(
-      newStatus === "completed" ? "Deal marked completed — listing removed from the Market Board."
+      newStatus === "completed" ? "Deal marked completed — listing removed from the Market Board and any referring broker(s) notified."
       : newStatus === "cancelled" ? "Deal cancelled — listing stays live for other buyers."
       : "Deal reverted to matched."
     );
@@ -1544,17 +1578,6 @@ export default function App() {
     const { data, error } = await supabase.storage.from("company-docs").createSignedUrl(referral.wholesale_license_path, 300);
     if (error) { showToast(error.message, "err"); return; }
     window.open(data.signedUrl, "_blank");
-  }
-
-  async function saveReferralCompliance(referral) {
-    const entry = adminReferralCompliance[referral.id] || {};
-    const cipc = entry.cipc ?? referral.referred_cipc;
-    const dmre = entry.dmre ?? referral.referred_dmre_license;
-    if (!cipc || !dmre) { showToast("Enter both CIPC and DMRE numbers.", "err"); return; }
-    const { error } = await supabase.from("referrals").update({ referred_cipc: cipc, referred_dmre_license: dmre }).eq("id", referral.id);
-    if (error) { showToast(error.message, "err"); return; }
-    await loadAdminData();
-    showToast("CIPC / DMRE numbers saved.");
   }
 
   async function startEditBrokerListing(referral) {
@@ -1762,6 +1785,12 @@ export default function App() {
                 <div className="gnt-field"><label>Email</label><input type="email" value={inviteForm.email} onChange={e => updateInviteField("email", e.target.value)} />
                   <div className="hint">This is also your login email.</div>
                 </div>
+                {inviteReferral?.referred_type === "seller" && (
+                  <div className="gnt-grid2">
+                    <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={inviteForm.cipc} onChange={e => updateInviteField("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                    <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={inviteForm.dmreLicense} onChange={e => updateInviteField("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
+                  </div>
+                )}
                 {!session && (
                   <div className="gnt-grid2">
                     <div className="gnt-field"><label>Choose a password</label><input type="password" value={inviteForm.password} onChange={e => updateInviteField("password", e.target.value)} placeholder="At least 6 characters" /></div>
@@ -2032,13 +2061,21 @@ export default function App() {
               {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
               <form onSubmit={submitRegForm}>
                 <div className="gnt-field"><label>{regType === "broker" ? "Agency / company name" : "Company name"}</label><input value={regForm.companyName} onChange={e => updateReg("companyName", e.target.value)} placeholder="e.g. Highveld Fuel Traders (Pty) Ltd" /></div>
-                {regType !== "broker" && (
-                  <div className="gnt-grid2">
-                    <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                    {regType === "seller" && (
+                {regType === "buyer" && (
+                  <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
+                )}
+                {regType === "seller" && (
+                  <>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.cipc} onChange={e => updateReg("cipc", e.target.value)} placeholder="2019/123456/07" /></div>
                       <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.dmreLicense} onChange={e => updateReg("dmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
-                    )}
-                  </div>
+                    </div>
+                    <div className="gnt-field">
+                      <label>Copy of Wholesale License (required)</label>
+                      <FileInput onChange={e => setRegWholesaleLicenseFile(e.target.files?.[0] || null)} />
+                      <div className="hint">Admin verifies this matches the license number you entered above before approving.</div>
+                    </div>
+                  </>
                 )}
                 {regType !== "broker" && (
                   <div className="gnt-field"><label>Company address</label><textarea rows={2} value={regForm.address} onChange={e => updateReg("address", e.target.value)} placeholder="Street, suburb, city, province" /></div>
@@ -2432,6 +2469,20 @@ export default function App() {
                       <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
                     </div>
                   ))}
+
+                  {myCompany.type === "seller" && (
+                    <>
+                      <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>Wholesale License copy</h4>
+                      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>Lets admin verify the CIPC/DMRE numbers on your profile. Private, admin only.</p>
+                      <FileInput multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "wholesale_license")} style={{ marginBottom: 10 }} />
+                      {myDocuments.filter(d => d.doc_type === "wholesale_license").map(d => (
+                        <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                          <span>{d.file_name}</span>
+                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
+                        </div>
+                      ))}
+                    </>
+                  )}
 
                   {myCompany.type === "seller" && myCompany.ownership_capacity === "mandate_holder" && (
                     <>
@@ -3058,18 +3109,12 @@ export default function App() {
                             <span className="mono" style={{ color: "var(--steel-soft)" }}>CIPC {r.referred_cipc}</span>
                           ) : (
                             <div style={{ width: 160 }}>
-                              {r.wholesale_license_path && (
-                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginBottom: 6 }} onClick={() => viewReferralLicense(r)}>View license copy</button>
+                              {r.wholesale_license_path ? (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => viewReferralLicense(r)}>View license copy</button>
+                              ) : (
+                                <span style={{ color: "var(--alert)" }}>No license uploaded</span>
                               )}
-                              <input className="mono" placeholder="CIPC no." style={{ marginBottom: 4, padding: "5px 7px", fontSize: 11.5, width: "100%" }}
-                                value={adminReferralCompliance[r.id]?.cipc ?? r.referred_cipc ?? ""}
-                                onChange={e => setAdminReferralCompliance(m => ({ ...m, [r.id]: { ...m[r.id], cipc: e.target.value } }))} />
-                              <input className="mono" placeholder="DMRE no." style={{ marginBottom: 4, padding: "5px 7px", fontSize: 11.5, width: "100%" }}
-                                value={adminReferralCompliance[r.id]?.dmre ?? r.referred_dmre_license ?? ""}
-                                onChange={e => setAdminReferralCompliance(m => ({ ...m, [r.id]: { ...m[r.id], dmre: e.target.value } }))} />
-                              {r.status === "pending" && (
-                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveReferralCompliance(r)}>Save numbers</button>
-                              )}
+                              <p style={{ fontSize: 10, color: "var(--steel-soft)", marginTop: 4 }}>Seller enters their own CIPC/DMRE numbers when they complete registration.</p>
                             </div>
                           )}
                         </td>
@@ -3078,12 +3123,9 @@ export default function App() {
                           <span className={`gnt-badge ${r.status}`}>{r.status}</span>
                           {r.status === "pending" && (
                             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={r.referred_type === "seller" && (!r.referred_cipc || !r.referred_dmre_license)} onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
+                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
                               <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setReferralStatus(r, "rejected")}>Reject</button>
                             </div>
-                          )}
-                          {r.status === "pending" && r.referred_type === "seller" && (!r.referred_cipc || !r.referred_dmre_license) && (
-                            <p style={{ fontSize: 10.5, color: "var(--alert)", marginTop: 4 }}>Enter and save CIPC + DMRE from the license copy before approving.</p>
                           )}
                         </td>
                         <td style={{ fontSize: 11.5 }}>
@@ -3237,7 +3279,7 @@ export default function App() {
                 <div className="dt" style={{ marginBottom: 6 }}>Uploaded documents</div>
                 {detailDocuments.map(d => (
                   <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
-                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : d.doc_type === "tank_report" ? "Tank report / POP" : d.doc_type === "cis_kyc" ? "CIS / KYC" : "Past performance"})</span></span>
+                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : d.doc_type === "tank_report" ? "Tank report / POP" : d.doc_type === "cis_kyc" ? "CIS / KYC" : d.doc_type === "wholesale_license" ? "Wholesale license copy" : "Past performance"})</span></span>
                     <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => viewCompanyDoc(d)}>View</button>
                   </div>
                 ))}
