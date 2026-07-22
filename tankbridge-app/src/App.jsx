@@ -613,6 +613,11 @@ export default function App() {
   const [refForm, setRefForm] = useState({ ref1Company: "", ref1Contact: "", ref2Company: "", ref2Contact: "" });
   const [refSaving, setRefSaving] = useState(false);
   const [showResubmit, setShowResubmit] = useState(false);
+  const [showPauseForm, setShowPauseForm] = useState(false);
+  const [showWithdrawForm, setShowWithdrawForm] = useState(false);
+  const [accountActionReason, setAccountActionReason] = useState("");
+  const [accountActionError, setAccountActionError] = useState("");
+  const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [resubmitForm, setResubmitForm] = useState({ companyName: "", cipc: "", dmreLicense: "", address: "" });
   const [resubmitError, setResubmitError] = useState("");
   const [resubmitSaving, setResubmitSaving] = useState(false);
@@ -1327,6 +1332,41 @@ export default function App() {
     showToast("Trade references saved — admin will review them.");
   }
 
+  async function submitPauseListings() {
+    setAccountActionBusy(true);
+    setAccountActionError("");
+    const { data, error } = await supabase.rpc("pause_my_listings", { p_reason: accountActionReason || null });
+    setAccountActionBusy(false);
+    if (error) { setAccountActionError(error.message); return; }
+    setMyCompany(data);
+    setShowPauseForm(false);
+    setAccountActionReason("");
+    await loadMarketBoard();
+    showToast("Your listings are paused — you can resume any time from here.");
+  }
+
+  async function submitResumeListings() {
+    const { data, error } = await supabase.rpc("resume_my_listings");
+    if (error) { showToast(error.message, "err"); return; }
+    setMyCompany(data);
+    await loadMarketBoard();
+    showToast("Welcome back — your listings are active again.");
+  }
+
+  async function submitWithdrawal() {
+    if (!accountActionReason.trim()) { setAccountActionError("Please tell us why you're withdrawing."); return; }
+    setAccountActionBusy(true);
+    setAccountActionError("");
+    const { data, error } = await supabase.rpc("request_account_withdrawal", { p_reason: accountActionReason });
+    setAccountActionBusy(false);
+    if (error) { setAccountActionError(error.message); return; }
+    setMyCompany(data);
+    setShowWithdrawForm(false);
+    setAccountActionReason("");
+    await loadMarketBoard();
+    showToast("Withdrawal requested — Tankbridge admin will process this shortly. Your data is kept on file, not deleted.");
+  }
+
   function startResubmit(company) {
     setResubmitForm({ companyName: company.company_name || "", cipc: company.cipc || "", dmreLicense: company.dmre_license || "", address: company.address || "" });
     setResubmitError("");
@@ -1551,6 +1591,14 @@ export default function App() {
   }
 
   // ---------- ADMIN ----------
+  async function processWithdrawal(companyId, approve) {
+    const { error } = await supabase.rpc("process_withdrawal", { p_company_id: companyId, p_approve: approve });
+    if (error) { showToast(error.message, "err"); return; }
+    setDetailCompany(c => c && ({ ...c, account_status: approve ? "withdrawn" : "active" }));
+    await loadAdminData();
+    showToast(approve ? "Account marked as withdrawn." : "Account reactivated.");
+  }
+
   async function setCompanyStatus(c, status) {
     const { error } = await supabase.rpc("approve_company", { p_company_id: c.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
@@ -2715,6 +2763,54 @@ export default function App() {
 
               {myCompany.status === "approved" && myCompany.type !== "broker" && (
                 <div className="gnt-card" style={{ marginBottom: 26 }}>
+                  <h3 style={{ fontSize: 18, marginBottom: 6 }}>Account status</h3>
+
+                  {myCompany.account_status === "withdrawn" ? (
+                    <div className="gnt-alert-banner"><Lock size={16} /> Your account has been withdrawn and your listings are no longer visible. Contact Tankbridge admin if you'd like to reactivate.</div>
+                  ) : myCompany.account_status === "withdrawal_requested" ? (
+                    <div className="gnt-alert-banner"><AlertTriangle size={16} /> Withdrawal requested on {fmtDate(myCompany.deactivation_requested_at)} — pending admin review. Your listings are hidden in the meantime.</div>
+                  ) : myCompany.account_status === "listings_paused" ? (
+                    <>
+                      <div className="gnt-alert-banner" style={{ marginBottom: 12 }}><AlertTriangle size={16} /> Your listings are paused and hidden from the Market Board{myCompany.deactivation_reason ? ` — "${myCompany.deactivation_reason}"` : ""}.</div>
+                      <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={submitResumeListings}>Resume my listings</button>
+                    </>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Taking a break, or leaving Tankbridge? Your data is always kept on file — never deleted — in case it's needed for an active dispute.</p>
+                      {!showPauseForm && !showWithdrawForm && (
+                        <div style={{ display: "flex", gap: 10 }}>
+                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setShowPauseForm(true); setAccountActionError(""); }}>Pause my listings</button>
+                          <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { setShowWithdrawForm(true); setAccountActionError(""); }}>Request full withdrawal</button>
+                        </div>
+                      )}
+                      {accountActionError && <div className="gnt-alert-banner" style={{ marginTop: 12 }}><AlertTriangle size={16} /> {accountActionError}</div>}
+                      {showPauseForm && (
+                        <div style={{ marginTop: 12 }}>
+                          <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>Hides your listings from the Market Board. Your account stays fully intact — resume any time.</p>
+                          <div className="gnt-field"><label>Reason (optional)</label><textarea rows={2} value={accountActionReason} onChange={e => setAccountActionReason(e.target.value)} /></div>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={accountActionBusy} onClick={submitPauseListings}>{accountActionBusy ? "Saving…" : "Confirm pause"}</button>
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setShowPauseForm(false); setAccountActionReason(""); }}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                      {showWithdrawForm && (
+                        <div style={{ marginTop: 12 }}>
+                          <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>Blocked if you have a deal currently in progress — please report its outcome first. Requires a reason, and goes to Tankbridge admin for final processing.</p>
+                          <div className="gnt-field"><label>Reason (required)</label><textarea rows={2} value={accountActionReason} onChange={e => setAccountActionReason(e.target.value)} /></div>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={accountActionBusy} onClick={submitWithdrawal}>{accountActionBusy ? "Submitting…" : "Confirm withdrawal request"}</button>
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setShowWithdrawForm(false); setAccountActionReason(""); }}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {myCompany.status === "approved" && myCompany.type !== "broker" && (
+                <div className="gnt-card" style={{ marginBottom: 26 }}>
                   <h3 style={{ fontSize: 18, marginBottom: 6 }}>Trust badges</h3>
                   <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Verified badges get more Market Board engagement and faster Accepts — build yours once, benefit on every future listing.</p>
 
@@ -2811,7 +2907,7 @@ export default function App() {
                 </div>
               )}
 
-              {myCompany.status === "approved" && myCompany.type !== "broker" && (
+              {myCompany.status === "approved" && myCompany.type !== "broker" && myCompany.account_status === "active" && (
                 <>
                   <h3 style={{ fontSize: 22, marginBottom: 4 }}>{myCompany.type === "seller" ? "List supply" : "Post a buy requirement"}</h3>
                   <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>You can publish as many listings as you like — one per location, volume or price.</p>
@@ -3301,7 +3397,7 @@ export default function App() {
                   <tbody>
                     {(adminTab === "pending" ? pendingCompanies : adminTab === "approved" ? approvedCompanies : rejectedCompanies).map(c => (
                       <tr key={c.id}>
-                        <td><strong>{c.company_name}</strong><br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{c.email}</span></td>
+                        <td><strong>{c.company_name}</strong>{c.account_status && c.account_status !== "active" && <span className="gnt-badge rejected" style={{ marginLeft: 6, fontSize: 10 }}>{c.account_status.replace(/_/g, " ")}</span>}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{c.email}</span></td>
                         <td style={{ textTransform: "capitalize" }}>{c.type}</td>
                         <td className="mono">{c.cipc}</td>
                         <td className="mono">{c.dmre_license}</td>
@@ -3559,8 +3655,31 @@ export default function App() {
           <div className="gnt-modal" onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div><h3 style={{ fontSize: 24 }}>{detailCompany.company_name}</h3><p style={{ fontSize: 12.5, color: "var(--steel-soft)", textTransform: "uppercase" }}>{detailCompany.type}</p></div>
-              <span className={`gnt-badge ${detailCompany.status}`}>{detailCompany.status}</span>
+              <div style={{ textAlign: "right" }}>
+                <span className={`gnt-badge ${detailCompany.status}`}>{detailCompany.status}</span>
+                {detailCompany.account_status && detailCompany.account_status !== "active" && (
+                  <div style={{ marginTop: 6 }}>
+                    <span className="gnt-badge rejected">{detailCompany.account_status.replace(/_/g, " ")}</span>
+                  </div>
+                )}
+              </div>
             </div>
+            {detailCompany.account_status && detailCompany.account_status !== "active" && (
+              <div className="gnt-alert-banner" style={{ marginTop: 12 }}>
+                <AlertTriangle size={16} />
+                <div>
+                  <strong style={{ display: "block" }}>{detailCompany.account_status === "withdrawal_requested" ? "Withdrawal requested" : detailCompany.account_status === "withdrawn" ? "Withdrawn" : "Listings paused"} on {fmtDate(detailCompany.deactivation_requested_at)}</strong>
+                  {detailCompany.deactivation_reason && <span>Reason: {detailCompany.deactivation_reason}</span>}
+                  {detailCompany.withdrawal_flagged && <span style={{ display: "block", color: "var(--alert)", fontWeight: 600, marginTop: 4 }}>⚠ Flagged: broker-referred company with recent deal activity — worth a closer look before processing.</span>}
+                </div>
+              </div>
+            )}
+            {detailCompany.account_status === "withdrawal_requested" && (
+              <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => processWithdrawal(detailCompany.id, true)}>Approve withdrawal</button>
+                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => processWithdrawal(detailCompany.id, false)}>Reactivate account instead</button>
+              </div>
+            )}
             <div className="gnt-detail-grid">
               <div><div className="dt">CIPC No.</div><div className="dd">{detailCompany.cipc}</div></div>
               <div><div className="dt">DMRE License</div><div className="dd">{detailCompany.dmre_license}</div></div>
