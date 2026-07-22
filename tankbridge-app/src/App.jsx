@@ -69,7 +69,7 @@ const EMPTY_REG = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "0.10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerSplitPct: "0.50",
 };
-const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered" };
+const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed" };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
@@ -629,6 +629,13 @@ export default function App() {
 
   const [marketFilter, setMarketFilter] = useState({ kind: "all", product: "all", terms: "all" });
   const [acceptTarget, setAcceptTarget] = useState(null);
+  const [offerTarget, setOfferTarget] = useState(null);
+  const [offerPrice, setOfferPrice] = useState("");
+  const [offerError, setOfferError] = useState("");
+  const [offerSubmitting, setOfferSubmitting] = useState(false);
+  const [myOffers, setMyOffers] = useState([]);
+  const [offerCounterInputs, setOfferCounterInputs] = useState({});
+  const [offerActionBusy, setOfferActionBusy] = useState(null);
   const [acceptStep, setAcceptStep] = useState(1);
   const [acceptError, setAcceptError] = useState("");
   const [revealedInfo, setRevealedInfo] = useState(null);
@@ -901,12 +908,12 @@ export default function App() {
   }, [myCompany]);
 
   useEffect(() => {
-    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments(); loadMyBrokerCommissions();
+    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments(); loadMyBrokerCommissions(); loadMyOffers();
     if (myCompany) setRefForm({
       ref1Company: myCompany.trade_ref_1_company || "", ref1Contact: myCompany.trade_ref_1_contact || "",
       ref2Company: myCompany.trade_ref_2_company || "", ref2Contact: myCompany.trade_ref_2_contact || "",
     });
-  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, loadMyBrokerCommissions, myCompany]);
+  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, loadMyBrokerCommissions, loadMyOffers, myCompany]);
 
   // ---------- ADMIN DATA ----------
   const loadAdminData = useCallback(async () => {
@@ -1196,7 +1203,8 @@ export default function App() {
   async function submitListing(e) {
     e.preventDefault();
     const vol = Number(listingForm.volume);
-    if (!listingForm.product || !listingForm.volume || !listingForm.unitPrice || !listingForm.location || !listingForm.availability) {
+    const isSellerOfferBuy = myCompany.type === "buyer" && listingForm.priceMode === "seller_offer";
+    if (!listingForm.product || !listingForm.volume || (!isSellerOfferBuy && !listingForm.unitPrice) || !listingForm.location || !listingForm.availability) {
       setListingError("Please complete all required fields."); return;
     }
     if (!listingForm.terms || listingForm.terms.length === 0) { setListingError("Select at least one trading term."); return; }
@@ -1207,7 +1215,8 @@ export default function App() {
       kind: myCompany.type === "seller" ? "sell" : "buy",
       product: listingForm.product,
       volume: vol,
-      unit_price: Number(listingForm.unitPrice),
+      unit_price: isSellerOfferBuy ? null : Number(listingForm.unitPrice),
+      price_mode: isSellerOfferBuy ? "seller_offer" : "fixed",
       terms: listingForm.terms,
       location: listingForm.location,
       availability: listingForm.availability,
@@ -1546,6 +1555,48 @@ export default function App() {
     .filter(l => marketFilter.kind === "all" || l.kind === marketFilter.kind)
     .filter(l => marketFilter.product === "all" || l.product === marketFilter.product)
     .filter(l => marketFilter.terms === "all" || (Array.isArray(l.terms) ? l.terms.includes(marketFilter.terms) : l.terms === marketFilter.terms));
+
+  function openSubmitOffer(listing) {
+    setOfferTarget(listing);
+    setOfferPrice("");
+    setOfferError("");
+  }
+
+  async function submitSellerOffer() {
+    const price = Number(offerPrice);
+    if (!price || price <= 0) { setOfferError("Please enter a valid price."); return; }
+    setOfferSubmitting(true);
+    setOfferError("");
+    const { error } = await supabase.rpc("submit_seller_offer", { p_listing_id: offerTarget.id, p_price: price });
+    setOfferSubmitting(false);
+    if (error) { setOfferError(error.message); return; }
+    setOfferTarget(null);
+    await loadMyOffers();
+    showToast("Offer submitted — the buyer has been notified and can accept or counter.");
+  }
+
+  const loadMyOffers = useCallback(async () => {
+    if (!myCompany || myCompany.type === "broker") return;
+    const { data } = await supabase.from("offers").select("*, listings(product, volume, location, terms, procedures)")
+      .or(`buyer_company_id.eq.${myCompany.id},seller_company_id.eq.${myCompany.id}`)
+      .order("updated_at", { ascending: false });
+    setMyOffers(data || []);
+  }, [myCompany]);
+
+  async function respondToOffer(offerId, action, priceValue) {
+    setOfferActionBusy(offerId + action);
+    const { error } = await supabase.rpc("respond_to_offer", { p_offer_id: offerId, p_action: action, p_price: priceValue ? Number(priceValue) : null });
+    setOfferActionBusy(null);
+    if (error) { showToast(error.message, "err"); return; }
+    await loadMyOffers();
+    await loadMyDeals();
+    await loadMarketBoard();
+    showToast(
+      action === "accept" ? "Offer accepted — deal recorded, check My Dashboard for contact details."
+      : action === "decline" ? "Negotiation declined."
+      : "Counter-offer sent."
+    );
+  }
 
   function openAccept(listing) {
     setAcceptTarget(listing);
@@ -2946,9 +2997,23 @@ export default function App() {
                         <TermsCheckboxGroup value={listingForm.terms} onChange={v => updateListingField("terms", v)} />
                       </div>
                     </div>
+                    {myCompany.type === "buyer" && (
+                      <div className="gnt-field">
+                        <label>Pricing</label>
+                        <div className="gnt-type-toggle">
+                          <button type="button" className={listingForm.priceMode === "fixed" ? "active" : ""} onClick={() => updateListingField("priceMode", "fixed")}>Set my bid price</button>
+                          <button type="button" className={listingForm.priceMode === "seller_offer" ? "active" : ""} onClick={() => updateListingField("priceMode", "seller_offer")}>Request seller offers</button>
+                        </div>
+                        {listingForm.priceMode === "seller_offer" && (
+                          <div className="hint">No price shown on the Market Board. Sellers submit their own offer; you can accept or counter (up to 2 rounds each) before it either matches or falls through.</div>
+                        )}
+                      </div>
+                    )}
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={listingForm.volume} onChange={e => updateListingField("volume", e.target.value)} placeholder="40000" /></div>
-                      <div className="gnt-field"><label>{myCompany.type === "seller" ? "Asking price (R / litre)" : "Bid price (R / litre)"}</label><input type="number" min="0" step="0.01" value={listingForm.unitPrice} onChange={e => updateListingField("unitPrice", e.target.value)} placeholder="21.45" /></div>
+                      {!(myCompany.type === "buyer" && listingForm.priceMode === "seller_offer") && (
+                        <div className="gnt-field"><label>{myCompany.type === "seller" ? "Asking price (R / litre)" : "Bid price (R / litre)"}</label><input type="number" min="0" step="0.01" value={listingForm.unitPrice} onChange={e => updateListingField("unitPrice", e.target.value)} placeholder="21.45" /></div>
+                      )}
                     </div>
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Location</label><input value={listingForm.location} onChange={e => updateListingField("location", e.target.value)} placeholder="e.g. Durban, Lesedi, Secunda" /></div>
@@ -3051,6 +3116,51 @@ export default function App() {
                       })()
                     )
                   ))}
+
+                  {myOffers.filter(o => o.status === "open").length > 0 && (
+                    <>
+                      <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My negotiations</h3>
+                      {myOffers.filter(o => o.status === "open").map(o => {
+                        const isBuyerSide = myCompany.id === o.buyer_company_id;
+                        const myTurn = (isBuyerSide && o.current_turn === "buyer") || (!isBuyerSide && o.current_turn === "seller");
+                        const myRound = isBuyerSide ? o.buyer_round : o.seller_round;
+                        const counterKey = o.id;
+                        return (
+                          <div key={o.id} className="gnt-card" style={{ marginBottom: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                              <div>
+                                <span className="gnt-badge pending">{myTurn ? "Your turn" : "Waiting on other party"}</span>
+                                <div style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{o.listings?.product} · {Number(o.listings?.volume || 0).toLocaleString()} ℓ · {fmtTerms(o.listings?.terms)} · {o.listings?.location}</div>
+                                <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 2 }}>You are the {isBuyerSide ? "buyer" : "seller"} · rounds used: {myRound}/2</div>
+                              </div>
+                              <div className="mono" style={{ fontWeight: 600 }}>{fmtMoney(o.current_price)}/ℓ</div>
+                            </div>
+                            {myTurn && (
+                              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                  <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={offerActionBusy === o.id + "accept"} onClick={() => respondToOffer(o.id, "accept")}>
+                                    {offerActionBusy === o.id + "accept" ? "Accepting…" : "Accept"}
+                                  </button>
+                                  {myRound < 2 && (
+                                    <>
+                                      <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 130 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                                      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey])}>
+                                        {offerActionBusy === o.id + "counter" ? "Sending…" : "Counter"}
+                                      </button>
+                                    </>
+                                  )}
+                                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={offerActionBusy === o.id + "decline"} onClick={() => respondToOffer(o.id, "decline")}>
+                                    {offerActionBusy === o.id + "decline" ? "Declining…" : "Decline"}
+                                  </button>
+                                </div>
+                                {myRound >= 2 && <p className="hint" style={{ marginTop: 6 }}>You've used both your counter-offers — accept or decline to close this out.</p>}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
 
                   <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My matched deals</h3>
                   {myCompany.type === "seller" && imfpaJustSigned && myCompany.imfpa_signed && (
@@ -3349,8 +3459,20 @@ export default function App() {
                       <div className="gnt-listing-product">{l.product}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>{isSell ? "asking / litre" : "bid / litre"}</small></div>
-                      <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(l)}>Accept price <ChevronRight size={13} /></button>
+                      {l.price_mode === "seller_offer" ? (
+                        <div className="gnt-listing-price">Offer<small>seller proposes price</small></div>
+                      ) : (
+                        <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>{isSell ? "asking / litre" : "bid / litre"}</small></div>
+                      )}
+                      {l.price_mode === "seller_offer" ? (
+                        myCompany?.type === "seller" ? (
+                          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openSubmitOffer(l)}>Submit offer <ChevronRight size={13} /></button>
+                        ) : (
+                          <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Sellers submit offers on this listing</span>
+                        )
+                      ) : (
+                        <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(l)}>Accept price <ChevronRight size={13} /></button>
+                      )}
                     </div>
                   </div>
                   <div className="gnt-listing-meta">
@@ -3813,6 +3935,31 @@ export default function App() {
                 <button className="gnt-btn gnt-btn-danger" onClick={() => setCompanyStatus(detailCompany, "rejected")}><XCircle size={15} /> Reject</button>
               )}
               <button className="gnt-btn gnt-btn-ghost" onClick={() => { setDetailCompany(null); setShowAdminEditCompany(false); }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Submit seller offer modal */}
+      {offerTarget && (
+        <div className="gnt-modal-backdrop" onClick={() => setOfferTarget(null)}>
+          <div className="gnt-modal" onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 20, marginBottom: 6 }}>Submit your offer</h3>
+            <p style={{ fontSize: 13, color: "var(--steel-soft)", marginBottom: 14 }}>{offerTarget.product} · {Number(offerTarget.volume).toLocaleString()} ℓ · {fmtTerms(offerTarget.terms)} · {offerTarget.location}</p>
+            {offerTarget.procedures && Object.keys(offerTarget.procedures).length > 0 && (
+              <div className="gnt-card" style={{ marginBottom: 14, fontSize: 12.5 }}>
+                <strong style={{ display: "block", marginBottom: 6 }}>Buyer's procedure</strong>
+                {Object.entries(offerTarget.procedures).map(([term, proc]) => (
+                  <p key={term} style={{ margin: "4px 0" }}><strong>{term}:</strong> {proc}</p>
+                ))}
+              </div>
+            )}
+            {offerError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {offerError}</div>}
+            <div className="gnt-field"><label>Your offer (R / litre)</label><input type="number" min="0" step="0.01" value={offerPrice} onChange={e => setOfferPrice(e.target.value)} placeholder="21.45" /></div>
+            <p className="hint" style={{ marginBottom: 12 }}>The buyer can accept or counter (up to 2 rounds each). If not accepted after that, the negotiation falls through.</p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="gnt-btn gnt-btn-amber" disabled={offerSubmitting} onClick={submitSellerOffer}>{offerSubmitting ? "Submitting…" : "Submit offer"}</button>
+              <button className="gnt-btn gnt-btn-ghost" onClick={() => setOfferTarget(null)}>Cancel</button>
             </div>
           </div>
         </div>
