@@ -2223,7 +2223,7 @@ export default function App() {
             <div className="gnt-step">
               <div className="gnt-step-num">03 — TRADE</div>
               <h3>Go live on the Market Board</h3>
-              <p>Once approved, sellers list supply and buyers browse and inquire — every deal routed through Tankbridge.</p>
+              <p>Once approved, buyers and sellers list and browse each other's offers directly — every deal routed through Tankbridge.</p>
             </div>
           </div>
 
@@ -2236,7 +2236,7 @@ export default function App() {
               <div className="gnt-card">
                 <ShieldCheck size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Pre-vetted, compliant</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every participant is CIPC- and DMRE-screened before a single litre is listed or bid on.</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every participant is CIPC- and DMRE-screened before a single litre is listed or bid on. Proven trade history earns a Verified badge, so trusted counterparties stand out.</p>
               </div>
               <div className="gnt-card">
                 <BadgeCheck size={22} color="#3f6b52" />
