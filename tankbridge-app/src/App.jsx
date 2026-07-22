@@ -3703,6 +3703,11 @@ export default function App() {
                 <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => processWithdrawal(detailCompany.id, false)}>Reactivate account instead</button>
               </div>
             )}
+            {detailCompany.account_status === "withdrawn" && (
+              <div style={{ marginTop: 12 }}>
+                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => processWithdrawal(detailCompany.id, false)}>Reactivate account</button>
+              </div>
+            )}
             <div className="gnt-detail-grid">
               <div><div className="dt">CIPC No.</div><div className="dd">{detailCompany.cipc}</div></div>
               <div><div className="dt">DMRE License</div><div className="dd">{detailCompany.dmre_license}</div></div>
