@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Truck, ShieldCheck, Clock, CheckCircle2, XCircle, FileSignature,
   ChevronRight, LogIn, Search, Plus, MapPin, Building2,
@@ -79,6 +79,29 @@ const EMPTY_REFERRAL = {
 function toggleTerm(list, term) {
   return list.includes(term) ? list.filter(t => t !== term) : [...list, term];
 }
+function FileInput({ onChange, multiple, disabled, style }) {
+  const inputRef = useRef(null);
+  const [label, setLabel] = useState("No file chosen");
+
+  function handleChange(e) {
+    const files = e.target.files;
+    if (!files || files.length === 0) setLabel("No file chosen");
+    else if (files.length === 1) setLabel(files[0].name);
+    else setLabel(`${files.length} files selected`);
+    onChange(e);
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", ...style }}>
+      <button type="button" className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={disabled} onClick={() => inputRef.current?.click()}>
+        Choose file{multiple ? "(s)" : ""}
+      </button>
+      <span style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{label}</span>
+      <input ref={inputRef} type="file" multiple={multiple} disabled={disabled} onChange={handleChange} style={{ display: "none" }} />
+    </div>
+  );
+}
+
 function TermsCheckboxGroup({ value, onChange }) {
   return (
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -2048,7 +2071,7 @@ export default function App() {
                     ) : (
                       <div className="gnt-field">
                         <label>Copy of Wholesale License</label>
-                        <input type="file" onChange={e => setRegReferralLicenseFile(e.target.files?.[0] || null)} />
+                        <FileInput onChange={e => setRegReferralLicenseFile(e.target.files?.[0] || null)} />
                         <div className="hint">Admin will review this and confirm the CIPC and DMRE license numbers before approving.</div>
                       </div>
                     )}
@@ -2159,12 +2182,12 @@ export default function App() {
                     {regError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {regError}</div>}
                     <div className="gnt-field">
                       <label>Signed NCNDA document</label>
-                      <input type="file" onChange={e => setCustomNcndaFile(e.target.files?.[0] || null)} />
+                      <FileInput onChange={e => setCustomNcndaFile(e.target.files?.[0] || null)} />
                     </div>
                     {regType !== "broker" && (
                       <div className="gnt-field">
                         <label>CIS / KYC document (optional)</label>
-                        <input type="file" onChange={e => setRegCisKycFile(e.target.files?.[0] || null)} />
+                        <FileInput onChange={e => setRegCisKycFile(e.target.files?.[0] || null)} />
                         <div className="hint">Speeds up admin review — you can also add this later from your Dashboard.</div>
                       </div>
                     )}
@@ -2218,7 +2241,7 @@ export default function App() {
                 {regType !== "broker" && (
                   <div className="gnt-field">
                     <label>CIS / KYC document (optional)</label>
-                    <input type="file" onChange={e => setRegCisKycFile(e.target.files?.[0] || null)} />
+                    <FileInput onChange={e => setRegCisKycFile(e.target.files?.[0] || null)} />
                     <div className="hint">A Corporate Information Sheet or KYC pack speeds up admin review — you can also add this later from your Dashboard.</div>
                   </div>
                 )}
@@ -2392,7 +2415,7 @@ export default function App() {
 
                   <h4 style={{ fontSize: 14, marginBottom: 8 }}>Past performance documents</h4>
                   {docError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {docError}</div>}
-                  <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "past_performance")} style={{ marginBottom: 10 }} />
+                  <FileInput multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "past_performance")} style={{ marginBottom: 10 }} />
                   {myDocuments.filter(d => d.doc_type === "past_performance").map(d => (
                     <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
                       <span>{d.file_name}</span>
@@ -2402,7 +2425,7 @@ export default function App() {
 
                   <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>CIS / KYC document (optional)</h4>
                   <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>A Corporate Information Sheet or KYC pack speeds up admin review — private, admin only.</p>
-                  <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "cis_kyc")} style={{ marginBottom: 10 }} />
+                  <FileInput multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "cis_kyc")} style={{ marginBottom: 10 }} />
                   {myDocuments.filter(d => d.doc_type === "cis_kyc").map(d => (
                     <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
                       <span>{d.file_name}</span>
@@ -2413,7 +2436,7 @@ export default function App() {
                   {myCompany.type === "seller" && myCompany.ownership_capacity === "mandate_holder" && (
                     <>
                       <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>Mandate / Allocation proof (private — admin only, never shown to buyers)</h4>
-                      <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "mandate_proof")} style={{ marginBottom: 10 }} />
+                      <FileInput multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "mandate_proof")} style={{ marginBottom: 10 }} />
                       {myDocuments.filter(d => d.doc_type === "mandate_proof").map(d => (
                         <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
                           <span>{d.file_name}</span>
@@ -2427,7 +2450,7 @@ export default function App() {
                     <>
                       <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>Tank report / Proof of Product (private — admin only, never shown to buyers)</h4>
                       <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>The clearest evidence is a Vopak (or equivalent terminal) tank report issued in your own company's name.</p>
-                      <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "tank_report")} style={{ marginBottom: 10 }} />
+                      <FileInput multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "tank_report")} style={{ marginBottom: 10 }} />
                       {myDocuments.filter(d => d.doc_type === "tank_report").map(d => (
                         <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
                           <span>{d.file_name}</span>
@@ -2654,7 +2677,7 @@ export default function App() {
                     ) : (
                       <div className="gnt-field">
                         <label>Copy of Wholesale License</label>
-                        <input type="file" onChange={e => setReferralLicenseFile(e.target.files?.[0] || null)} />
+                        <FileInput onChange={e => setReferralLicenseFile(e.target.files?.[0] || null)} />
                         <div className="hint">Admin will review this and confirm the CIPC and DMRE license numbers before approving.</div>
                       </div>
                     )}
