@@ -1575,26 +1575,36 @@ export default function App() {
     if (!price || price <= 0) { setOfferError("Please enter a valid price."); return; }
     setOfferSubmitting(true);
     setOfferError("");
-    const { error } = await supabase.rpc("submit_seller_offer", { p_listing_id: offerTarget.id, p_price: price });
+    const { data, error } = await supabase.rpc("submit_seller_offer", { p_listing_id: offerTarget.id, p_price: price });
     setOfferSubmitting(false);
     if (error) { setOfferError(error.message); return; }
     setOfferTarget(null);
+    fetch("/api/notify-offer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offerId: data.id, event: "new_offer" }),
+    }).catch(() => {});
     await loadMyOffers();
-    showToast("Offer submitted — the buyer has been notified and can accept or counter.");
+    showToast("Offer submitted — the buyer has been emailed and can accept or counter.");
   }
 
   async function respondToOffer(offerId, action, priceValue) {
     setOfferActionBusy(offerId + action);
-    const { error } = await supabase.rpc("respond_to_offer", { p_offer_id: offerId, p_action: action, p_price: priceValue ? Number(priceValue) : null });
+    const { data, error } = await supabase.rpc("respond_to_offer", { p_offer_id: offerId, p_action: action, p_price: priceValue ? Number(priceValue) : null });
     setOfferActionBusy(null);
     if (error) { showToast(error.message, "err"); return; }
+    if (action !== "decline") {
+      fetch("/api/notify-offer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ offerId: data.id, event: action === "accept" ? "accepted" : "counter" }),
+      }).catch(() => {});
+    }
     await loadMyOffers();
     await loadMyDeals();
     await loadMarketBoard();
     showToast(
       action === "accept" ? "Offer accepted — deal recorded, check My Dashboard for contact details."
       : action === "decline" ? "Negotiation declined."
-      : "Counter-offer sent."
+      : "Counter-offer sent — the other party has been emailed."
     );
   }
 
@@ -3465,11 +3475,7 @@ export default function App() {
                         <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>{isSell ? "asking / litre" : "bid / litre"}</small></div>
                       )}
                       {l.price_mode === "seller_offer" ? (
-                        myCompany?.type === "seller" ? (
-                          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openSubmitOffer(l)}>Submit offer <ChevronRight size={13} /></button>
-                        ) : (
-                          <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Sellers submit offers on this listing</span>
-                        )
+                        <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openSubmitOffer(l)}>Submit offer <ChevronRight size={13} /></button>
                       ) : (
                         <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(l)}>Accept price <ChevronRight size={13} /></button>
                       )}
@@ -3944,26 +3950,47 @@ export default function App() {
       {offerTarget && (
         <div className="gnt-modal-backdrop" onClick={() => setOfferTarget(null)}>
           <div className="gnt-modal" onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 20, marginBottom: 6 }}>Submit your offer</h3>
-            <p style={{ fontSize: 13, color: "var(--steel-soft)", marginBottom: 14 }}>{offerTarget.product} · {Number(offerTarget.volume).toLocaleString()} ℓ · {fmtTerms(offerTarget.terms)} · {offerTarget.location}</p>
-            {offerTarget.procedures && Object.keys(offerTarget.procedures).length > 0 && (
-              <div className="gnt-card" style={{ marginBottom: 14, fontSize: 12.5 }}>
-                <strong style={{ display: "block", marginBottom: 6 }}>Buyer's procedure</strong>
-                {Object.entries(offerTarget.procedures).map(([term, proc]) => (
-                  <p key={term} style={{ margin: "4px 0" }}><strong>{term}:</strong> {proc}</p>
-                ))}
-              </div>
+            {!session ? (
+              <>
+                <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to submit an offer</h3>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in with your seller account to submit an offer — you'll land on your Dashboard. New here? Register as a seller instead.</p>
+                <LoginGate
+                  onLoggedIn={() => { setOfferTarget(null); goto("dashboard"); }}
+                  onRegisterClick={() => { setOfferTarget(null); resetRegFlow(); }}
+                />
+              </>
+            ) : myCompany?.type !== "seller" ? (
+              <>
+                <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sellers only</h3>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Only an approved seller account can submit an offer on this listing. {myCompany ? "Your account is registered as a " + myCompany.type + "." : ""}</p>
+                <button className="gnt-btn gnt-btn-ghost" onClick={() => setOfferTarget(null)}>Close</button>
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontSize: 20, marginBottom: 6 }}>Submit your offer</h3>
+                <p style={{ fontSize: 13, color: "var(--steel-soft)", marginBottom: 14 }}>{offerTarget.product} · {Number(offerTarget.volume).toLocaleString()} ℓ · {fmtTerms(offerTarget.terms)} · {offerTarget.location}</p>
+                {offerTarget.procedures && Object.keys(offerTarget.procedures).length > 0 && (
+                  <div className="gnt-card" style={{ marginBottom: 14, fontSize: 12.5 }}>
+                    <strong style={{ display: "block", marginBottom: 6 }}>Buyer's procedure</strong>
+                    {Object.entries(offerTarget.procedures).map(([term, proc]) => (
+                      <p key={term} style={{ margin: "4px 0" }}><strong>{term}:</strong> {proc}</p>
+                    ))}
+                  </div>
+                )}
+                {offerError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {offerError}</div>}
+                <div className="gnt-field"><label>Your offer (R / litre)</label><input type="number" min="0" step="0.01" value={offerPrice} onChange={e => setOfferPrice(e.target.value)} placeholder="21.45" /></div>
+                <p className="hint" style={{ marginBottom: 12 }}>The buyer can accept or counter (up to 2 rounds each). If not accepted after that, the negotiation falls through.</p>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="gnt-btn gnt-btn-amber" disabled={offerSubmitting} onClick={submitSellerOffer}>{offerSubmitting ? "Submitting…" : "Submit offer"}</button>
+                  <button className="gnt-btn gnt-btn-ghost" onClick={() => setOfferTarget(null)}>Cancel</button>
+                </div>
+              </>
             )}
-            {offerError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {offerError}</div>}
-            <div className="gnt-field"><label>Your offer (R / litre)</label><input type="number" min="0" step="0.01" value={offerPrice} onChange={e => setOfferPrice(e.target.value)} placeholder="21.45" /></div>
-            <p className="hint" style={{ marginBottom: 12 }}>The buyer can accept or counter (up to 2 rounds each). If not accepted after that, the negotiation falls through.</p>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="gnt-btn gnt-btn-amber" disabled={offerSubmitting} onClick={submitSellerOffer}>{offerSubmitting ? "Submitting…" : "Submit offer"}</button>
-              <button className="gnt-btn gnt-btn-ghost" onClick={() => setOfferTarget(null)}>Cancel</button>
-            </div>
           </div>
         </div>
       )}
+
+      {(() => { return null; })() /* keep old block below removed */}
 
       {/* Accept price modal — step 1: procedure, step 2: confirm */}
       {acceptTarget && (
