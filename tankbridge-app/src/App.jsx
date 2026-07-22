@@ -1767,19 +1767,19 @@ export default function App() {
     const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
     if (status === "approved" && referral.is_co_broker_referral) {
-      const res = await fetch("/api/send-co-broker-claim", {
+      const res = await fetch("/api/send-referral-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ referralId: referral.id }),
+        body: JSON.stringify({ type: "co_broker_claim", referralId: referral.id }),
       }).catch(() => null);
       showToast(res && res.ok
         ? `Verified — the upstream broker has been emailed to confirm the relationship.`
         : `Verified, but the confirmation email failed to send. Use "Resend confirmation" below.`, res && res.ok ? "ok" : "err");
     } else if (status === "approved" && referral.referred_type === "seller") {
-      const res = await fetch("/api/send-referral-confirm", {
+      const res = await fetch("/api/send-referral-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ referralId: referral.id }),
+        body: JSON.stringify({ type: "confirm", referralId: referral.id }),
       }).catch(() => null);
       showToast(res && res.ok
         ? `Verified — ${referral.referred_company_name} has been emailed to confirm price and commission before the listing goes live.`
@@ -1794,30 +1794,30 @@ export default function App() {
   }
 
   async function resendCoBrokerClaim(referral) {
-    const res = await fetch("/api/send-co-broker-claim", {
+    const res = await fetch("/api/send-referral-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ referralId: referral.id }),
+      body: JSON.stringify({ type: "co_broker_claim", referralId: referral.id }),
     }).catch(() => null);
     if (res && res.ok) { showToast("Confirmation email resent."); await loadAdminData(); }
     else { showToast("Failed to send confirmation email.", "err"); }
   }
 
   async function resendReferralInvite(referral) {
-    const res = await fetch("/api/send-referral-invite", {
+    const res = await fetch("/api/send-referral-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ referralId: referral.id }),
+      body: JSON.stringify({ type: "invite", referralId: referral.id }),
     }).catch(() => null);
     if (res && res.ok) { showToast("Invite email resent."); await loadAdminData(); }
     else { showToast("Failed to send invite email.", "err"); }
   }
 
   async function resendReferralConfirm(referral) {
-    const res = await fetch("/api/send-referral-confirm", {
+    const res = await fetch("/api/send-referral-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ referralId: referral.id }),
+      body: JSON.stringify({ type: "confirm", referralId: referral.id }),
     }).catch(() => null);
     if (res && res.ok) { showToast("Confirmation email resent."); await loadAdminData(); }
     else { showToast("Failed to send confirmation email.", "err"); }
