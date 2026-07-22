@@ -907,6 +907,14 @@ export default function App() {
     setMyBrokerCommissions(data || []);
   }, [myCompany]);
 
+  const loadMyOffers = useCallback(async () => {
+    if (!myCompany || myCompany.type === "broker") return;
+    const { data } = await supabase.from("offers").select("*, listings(product, volume, location, terms, procedures)")
+      .or(`buyer_company_id.eq.${myCompany.id},seller_company_id.eq.${myCompany.id}`)
+      .order("updated_at", { ascending: false });
+    setMyOffers(data || []);
+  }, [myCompany]);
+
   useEffect(() => {
     loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments(); loadMyBrokerCommissions(); loadMyOffers();
     if (myCompany) setRefForm({
@@ -1574,14 +1582,6 @@ export default function App() {
     await loadMyOffers();
     showToast("Offer submitted — the buyer has been notified and can accept or counter.");
   }
-
-  const loadMyOffers = useCallback(async () => {
-    if (!myCompany || myCompany.type === "broker") return;
-    const { data } = await supabase.from("offers").select("*, listings(product, volume, location, terms, procedures)")
-      .or(`buyer_company_id.eq.${myCompany.id},seller_company_id.eq.${myCompany.id}`)
-      .order("updated_at", { ascending: false });
-    setMyOffers(data || []);
-  }, [myCompany]);
 
   async function respondToOffer(offerId, action, priceValue) {
     setOfferActionBusy(offerId + action);
