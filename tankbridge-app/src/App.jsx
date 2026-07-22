@@ -66,13 +66,14 @@ const EMPTY_REG = {
   password: "", confirmPassword: "", ownershipCapacity: "",
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
   // broker-only: the first referral they submit as part of registering
-  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "",
+  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "0.10",
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered" };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
   product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: [], notes: "",
+  proposedCommissionRate: "0.10",
 };
 
 function toggleTerm(list, term) {
@@ -450,6 +451,16 @@ export default function App() {
     } catch { return null; }
   })();
 
+  const referralConfirmParams = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("referral_confirm") === "1" && p.get("token")) {
+        return { token: p.get("token"), decision: p.get("decision") || "" };
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+
   const requestedView = (() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -458,7 +469,13 @@ export default function App() {
     } catch { return null; }
   })();
 
-  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : requestedView || "landing");
+  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : requestedView || "landing");
+  const [referralConfirmData, setReferralConfirmData] = useState(null);
+  const [referralConfirmLoading, setReferralConfirmLoading] = useState(true);
+  const [referralConfirmResult, setReferralConfirmResult] = useState(null);
+  const [referralConfirmError, setReferralConfirmError] = useState("");
+  const [referralRejectReason, setReferralRejectReason] = useState("");
+  const [showReferralRejectForm, setShowReferralRejectForm] = useState(referralConfirmParams?.decision === "reject");
   const [inviteReferral, setInviteReferral] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(true);
   const [inviteStep, setInviteStep] = useState("intro"); // intro -> account -> confirm-email -> ncnda -> done
@@ -482,6 +499,7 @@ export default function App() {
   const [boardListings, setBoardListings] = useState([]);
   const [publicBlacklist, setPublicBlacklist] = useState([]);
   const [adminBlacklist, setAdminBlacklist] = useState([]);
+  const [adminBrokerCommissions, setAdminBrokerCommissions] = useState([]);
   const [blacklistForm, setBlacklistForm] = useState({ companyName: "", reason: "" });
   const [blacklistError, setBlacklistError] = useState("");
   const [myListings, setMyListings] = useState([]);
@@ -497,6 +515,7 @@ export default function App() {
   const [showInactiveListings, setShowInactiveListings] = useState(false);
 
   const [myReferrals, setMyReferrals] = useState([]);
+  const [myBrokerCommissions, setMyBrokerCommissions] = useState([]);
   const [referralForm, setReferralForm] = useState(EMPTY_REFERRAL);
   const [referralError, setReferralError] = useState("");
   const [referralAgree, setReferralAgree] = useState(false);
@@ -612,6 +631,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  // ---------- SELLER PRICE/COMMISSION CONFIRMATION (public, no login) ----------
+  useEffect(() => {
+    if (!referralConfirmParams) { setReferralConfirmLoading(false); return; }
+    (async () => {
+      const { data, error } = await supabase.rpc("get_referral_confirm_by_token", { p_token: referralConfirmParams.token });
+      if (error || !data || data.length === 0) { setReferralConfirmError("This link is invalid or has expired."); setReferralConfirmLoading(false); return; }
+      setReferralConfirmData(data[0]);
+      setReferralConfirmLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function submitReferralConfirm(approved, reason) {
+    const { data, error } = await supabase.rpc("confirm_referral_via_token", {
+      p_token: referralConfirmParams.token, p_approved: approved, p_reason: reason || null,
+    });
+    if (error) { setReferralConfirmError(error.message); return; }
+    setReferralConfirmResult({ approved, referral: data });
+  }
+
   function updateInviteField(field, value) { setInviteForm(f => ({ ...f, [field]: value })); }
 
   async function submitInviteAccount(e) {
@@ -721,29 +760,38 @@ export default function App() {
     setMyDocuments(data || []);
   }, [myCompany]);
 
+  const loadMyBrokerCommissions = useCallback(async () => {
+    if (!myCompany || myCompany.type !== "broker") return;
+    const { data } = await supabase.from("deal_broker_commissions").select("*, deals(product, volume, unit_price, created_at)")
+      .eq("broker_company_id", myCompany.id).order("created_at", { ascending: false });
+    setMyBrokerCommissions(data || []);
+  }, [myCompany]);
+
   useEffect(() => {
-    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments();
+    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments(); loadMyBrokerCommissions();
     if (myCompany) setRefForm({
       ref1Company: myCompany.trade_ref_1_company || "", ref1Contact: myCompany.trade_ref_1_contact || "",
       ref2Company: myCompany.trade_ref_2_company || "", ref2Contact: myCompany.trade_ref_2_contact || "",
     });
-  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, myCompany]);
+  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, loadMyBrokerCommissions, myCompany]);
 
   // ---------- ADMIN DATA ----------
   const loadAdminData = useCallback(async () => {
     if (!isAdmin) return;
-    const [{ data: cos }, { data: deals }, { data: listings }, { data: referrals }, { data: bl }] = await Promise.all([
+    const [{ data: cos }, { data: deals }, { data: listings }, { data: referrals }, { data: bl }, { data: bc }] = await Promise.all([
       supabase.from("companies").select("*").order("created_at", { ascending: false }),
       supabase.from("deals").select("*").order("created_at", { ascending: false }),
       supabase.from("listings").select("*").order("created_at", { ascending: false }),
       supabase.from("referrals").select("*").order("created_at", { ascending: false }),
       supabase.from("blacklist").select("*").order("created_at", { ascending: false }),
+      supabase.from("deal_broker_commissions").select("*").order("created_at", { ascending: false }),
     ]);
     setAdminCompanies(cos || []);
     setAdminDeals(deals || []);
     setAdminListings(listings || []);
     setAdminReferrals(referrals || []);
     setAdminBlacklist(bl || []);
+    setAdminBrokerCommissions(bc || []);
   }, [isAdmin]);
   useEffect(() => { loadAdminData(); }, [loadAdminData]);
 
@@ -769,6 +817,10 @@ export default function App() {
       if (!regForm.referredCompanyName || !regForm.referredCipc) return "Please enter the referred company's name and CIPC number.";
       if (!regForm.referredEmail || !/^\S+@\S+\.\S+$/.test(regForm.referredEmail)) return "A valid email for the referred company is required — Tankbridge will invite them to register directly.";
       if (regForm.referredType === "seller" && !regForm.referredDmreLicense) return "DMRE wholesale license is required when referring a seller.";
+      if (regForm.referredType === "seller") {
+        const rate = Number(regForm.proposedCommissionRate);
+        if (isNaN(rate) || rate < 0.10 || rate > 0.99) return "Proposed commission must be between R0.10 and R0.99 per litre.";
+      }
       if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
       if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
       if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
@@ -842,6 +894,7 @@ export default function App() {
         referred_cipc: regForm.referredCipc,
         referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
         referred_email: regForm.referredEmail,
+        proposed_commission_rate: regForm.referredType === "seller" ? Number(regForm.proposedCommissionRate) : null,
         product: regForm.product,
         volume: Number(regForm.tradeVolume),
         unit_price: Number(regForm.tradePrice),
@@ -1136,6 +1189,10 @@ export default function App() {
     if (f.referredType === "seller" && !f.referredDmreLicense) {
       setReferralError("DMRE wholesale license is required when referring a seller."); return;
     }
+    if (f.referredType === "seller") {
+      const rate = Number(f.proposedCommissionRate);
+      if (isNaN(rate) || rate < 0.10 || rate > 0.99) { setReferralError("Proposed commission must be between R0.10 and R0.99 per litre."); return; }
+    }
     if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
     if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
     setReferralError("");
@@ -1154,6 +1211,7 @@ export default function App() {
       referred_contact_name: f.referredContactName || null,
       referred_phone: f.referredPhone || null,
       referred_email: f.referredEmail || null,
+      proposed_commission_rate: f.referredType === "seller" ? Number(f.proposedCommissionRate) : null,
       product: f.product,
       volume: Number(f.volume),
       unit_price: Number(f.unitPrice),
@@ -1325,11 +1383,10 @@ export default function App() {
   async function saveCommission(dealId) {
     const amount = Number(commissionEdits[dealId]);
     if (!amount || amount <= 0) { showToast("Please enter a valid commission amount.", "err"); return; }
-    const { error } = await supabase.from("deals").update({ platform_commission_amount: amount }).eq("id", dealId);
+    const { error } = await supabase.rpc("set_platform_commission", { p_deal_id: dealId, p_amount: amount });
     if (error) { showToast(error.message, "err"); return; }
-    await supabase.rpc("recalculate_referral_commission", { p_deal_id: dealId });
     await loadAdminData();
-    showToast("Platform commission saved — linked broker commission has been recalculated.");
+    showToast("Platform commission saved — linked broker commission(s) recalculated automatically.");
   }
 
   async function setDealStatus(dealId, newStatus) {
@@ -1383,9 +1440,20 @@ export default function App() {
   async function setReferralStatus(referral, status) {
     const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
-    showToast(status === "approved"
-      ? `Verified — ${referral.referred_company_name}'s listing is now live on the Market Board. They'll be asked to confirm and complete registration once a real counterparty accepts it.`
-      : "Referral rejected.");
+    if (status === "approved" && referral.referred_type === "seller") {
+      const res = await fetch("/api/send-referral-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ referralId: referral.id }),
+      }).catch(() => null);
+      showToast(res && res.ok
+        ? `Verified — ${referral.referred_company_name} has been emailed to confirm price and commission before the listing goes live.`
+        : `Verified, but the confirmation email failed to send. Use "Resend confirmation" below.`, res && res.ok ? "ok" : "err");
+    } else if (status === "approved") {
+      showToast(`Verified — ${referral.referred_company_name}'s listing is now live on the Market Board. They'll be asked to complete registration once a real counterparty accepts it.`);
+    } else {
+      showToast("Referral rejected.");
+    }
     await loadAdminData();
     await loadMarketBoard();
   }
@@ -1398,6 +1466,16 @@ export default function App() {
     }).catch(() => null);
     if (res && res.ok) { showToast("Invite email resent."); await loadAdminData(); }
     else { showToast("Failed to send invite email.", "err"); }
+  }
+
+  async function resendReferralConfirm(referral) {
+    const res = await fetch("/api/send-referral-confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ referralId: referral.id }),
+    }).catch(() => null);
+    if (res && res.ok) { showToast("Confirmation email resent."); await loadAdminData(); }
+    else { showToast("Failed to send confirmation email.", "err"); }
   }
 
   async function startEditBrokerListing(referral) {
@@ -1482,6 +1560,74 @@ export default function App() {
       {toast && (
         <div style={{ position: "fixed", top: 76, right: 20, zIndex: 200, background: toast.kind === "err" ? "#a63b32" : "#101b28", color: "#ece8de", padding: "12px 18px", fontSize: 13.5, maxWidth: 320, boxShadow: "0 6px 18px rgba(0,0,0,0.25)" }}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* ===================== SELLER PRICE/COMMISSION CONFIRMATION (public) ===================== */}
+      {view === "referral_confirm" && (
+        <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 560, margin: "0 auto" }}>
+          {referralConfirmLoading ? (
+            <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
+          ) : referralConfirmError && !referralConfirmData ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Link not found</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>{referralConfirmError}</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : referralConfirmResult ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              {referralConfirmResult.approved ? (
+                <>
+                  <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Confirmed — you're live</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Your listing is now on the Tankbridge Market Board at the terms shown. We'll email you if a buyer accepts, at which point you'll complete your own registration and sign the IMFPA.</p>
+                </>
+              ) : (
+                <>
+                  <XCircle size={40} color="#a63b32" style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Thanks for letting us know</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>This won't be listed. Tankbridge admin and the referring broker have been notified.</p>
+                </>
+              )}
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : referralConfirmData?.seller_confirm_status !== "pending" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Already responded to</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>This confirmation link has already been used.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : (
+            <div className="gnt-card" style={{ padding: "32px 28px" }}>
+              <h2 style={{ fontSize: 24, marginBottom: 6 }}>Please confirm your listing</h2>
+              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 18 }}><strong>{referralConfirmData.broker_company_name}</strong> proposed listing <strong>{referralConfirmData.referred_company_name}</strong> with the details below. No login needed to respond.</p>
+              <div className="gnt-detail-grid" style={{ marginTop: 0, marginBottom: 18 }}>
+                <div><div className="dt">Product</div><div className="dd">{referralConfirmData.product}</div></div>
+                <div><div className="dt">Volume</div><div className="dd">{Number(referralConfirmData.volume).toLocaleString()} ℓ</div></div>
+                <div><div className="dt">Asking price</div><div className="dd">{fmtMoney(referralConfirmData.unit_price)}/ℓ</div></div>
+                <div><div className="dt">Terms</div><div className="dd">{fmtTerms(referralConfirmData.terms)}</div></div>
+                <div><div className="dt">Location</div><div className="dd">{referralConfirmData.location}</div></div>
+                <div><div className="dt">Proposed commission</div><div className="dd">{fmtMoney(referralConfirmData.proposed_commission_rate || 0.10)}/ℓ</div></div>
+              </div>
+              {referralConfirmError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {referralConfirmError}</div>}
+              {!showReferralRejectForm ? (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="gnt-btn gnt-btn-amber" onClick={() => submitReferralConfirm(true)}>Approve &amp; list it</button>
+                  <button className="gnt-btn gnt-btn-danger" onClick={() => setShowReferralRejectForm(true)}>This isn't right</button>
+                </div>
+              ) : (
+                <div>
+                  <div className="gnt-field"><label>What's wrong? (optional)</label><textarea rows={2} value={referralRejectReason} onChange={e => setReferralRejectReason(e.target.value)} placeholder="e.g. Wrong price, already sold, not my product…" /></div>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="gnt-btn gnt-btn-danger" onClick={() => submitReferralConfirm(false, referralRejectReason)}>Confirm rejection</button>
+                    <button className="gnt-btn gnt-btn-ghost" onClick={() => setShowReferralRejectForm(false)}>Back</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1848,6 +1994,11 @@ export default function App() {
                       )}
                     </div>
                     <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={regForm.referredEmail} onChange={e => updateReg("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
+                    {regForm.referredType === "seller" && (
+                      <div className="gnt-field"><label>Proposed commission (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={regForm.proposedCommissionRate} onChange={e => updateReg("proposedCommissionRate", e.target.value)} />
+                        <div className="hint">Included in the confirmation email sent to the seller — they must approve this before the listing goes live.</div>
+                      </div>
+                    )}
                     <div className="gnt-field"><label>Product</label>
                       <select value={regForm.product} onChange={e => updateReg("product", e.target.value)}>
                         {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
@@ -2421,6 +2572,11 @@ export default function App() {
                         <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={referralForm.referredDmreLicense} onChange={e => updateReferralField("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
                       )}
                     </div>
+                    {referralForm.referredType === "seller" && (
+                      <div className="gnt-field"><label>Proposed commission (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={referralForm.proposedCommissionRate} onChange={e => updateReferralField("proposedCommissionRate", e.target.value)} />
+                        <div className="hint">Included in the confirmation email sent to the seller — they must approve this before the listing goes live.</div>
+                      </div>
+                    )}
                     <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Once admin approves, Tankbridge emails this company an invite to register their own account — they set their own password and go live once they complete it.</p>
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Contact person (optional)</label><input value={referralForm.referredContactName} onChange={e => updateReferralField("referredContactName", e.target.value)} /></div>
@@ -2517,6 +2673,21 @@ export default function App() {
                           <p className="hint" style={{ marginTop: 6 }}>You can manage this listing until {r.referred_company_name} completes their own registration — after that, it's under their control.</p>
                         </div>
                       )}
+                    </div>
+                  ))}
+
+                  <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My commissions</h3>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Automatically tracked for any deal completed by a company you referred, within 24 months of their registration — no manual linking needed.</p>
+                  {myBrokerCommissions.length === 0 && <div className="gnt-empty">No commissions tracked yet.</div>}
+                  {myBrokerCommissions.map(c => (
+                    <div key={c.id} className="gnt-card" style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                        <div>
+                          <span className={`gnt-badge ${c.commission_status === "paid" ? "approved" : c.commission_status === "payable" ? "selling" : "pending"}`}>{c.commission_status}</span>
+                          <div style={{ fontSize: 13, marginTop: 4 }}>{c.deals?.product} · {Number(c.deals?.volume || 0).toLocaleString()} ℓ · {c.role === "seller_side" ? "Seller-side" : "Buyer-side"} referral · {fmtDate(c.created_at)}</div>
+                        </div>
+                        <div style={{ fontWeight: 600 }}>{c.commission_amount != null ? fmtMoney(c.commission_amount) : "—"}</div>
+                      </div>
                     </div>
                   ))}
                 </>
@@ -2666,7 +2837,7 @@ export default function App() {
                     </button>
                   )}
                   <table className="gnt-table">
-                    <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Status</th><th>Self-reported</th><th>Platform commission (R)</th><th>Date</th></tr></thead>
+                    <thead><tr><th>Product</th><th>Seller</th><th>Buyer</th><th>Status</th><th>Self-reported</th><th>Platform commission (R)</th><th>Broker commissions</th><th>Date</th></tr></thead>
                     <tbody>
                       {adminDeals.filter(d => showCancelledDeals || d.status !== "cancelled").map(d => (
                         <tr key={d.id}>
@@ -2712,10 +2883,23 @@ export default function App() {
                               );
                             })()}
                           </td>
+                          <td style={{ fontSize: 11.5 }}>
+                            {adminBrokerCommissions.filter(bc => bc.deal_id === d.id).length === 0 ? (
+                              <span style={{ color: "var(--steel-soft)" }}>—</span>
+                            ) : (
+                              adminBrokerCommissions.filter(bc => bc.deal_id === d.id).map(bc => (
+                                <div key={bc.id} style={{ marginBottom: 4 }}>
+                                  {adminCompanies.find(c => c.id === bc.broker_company_id)?.company_name || "Broker"} ({bc.role === "seller_side" ? "seller-side" : "buyer-side"}) —{" "}
+                                  <strong>{bc.commission_amount != null ? fmtMoney(bc.commission_amount) : "pending"}</strong>
+                                  <span className={`gnt-badge ${bc.commission_status === "paid" ? "approved" : bc.commission_status === "payable" ? "selling" : "pending"}`} style={{ marginLeft: 6 }}>{bc.commission_status}</span>
+                                </div>
+                              ))
+                            )}
+                          </td>
                           <td>{fmtDate(d.created_at)}</td>
                         </tr>
                       ))}
-                      {adminDeals.filter(d => showCancelledDeals || d.status !== "cancelled").length === 0 && <tr><td colSpan={7}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
+                      {adminDeals.filter(d => showCancelledDeals || d.status !== "cancelled").length === 0 && <tr><td colSpan={8}><div className="gnt-empty">No matched deals yet.</div></td></tr>}
                     </tbody>
                   </table>
                 </>
@@ -2776,6 +2960,19 @@ export default function App() {
                         <td style={{ fontSize: 11.5 }}>
                           {r.status !== "approved" ? (
                             <span style={{ color: "var(--steel-soft)" }}>—</span>
+                          ) : r.referred_type === "seller" && r.seller_confirm_status !== "approved" ? (
+                            <>
+                              <span className={`gnt-badge ${r.seller_confirm_status === "rejected" ? "rejected" : "pending"}`}>
+                                {r.seller_confirm_status === "rejected" ? "Seller rejected these terms" : "Awaiting seller confirmation"}
+                              </span>
+                              {r.seller_confirm_status === "rejected" && r.seller_confirm_reason && (
+                                <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>Reason: {r.seller_confirm_reason}</p>
+                              )}
+                              <p style={{ fontSize: 10.5, color: "var(--steel-soft)", margin: "4px 0" }}>Not on the Market Board yet — seller must approve the price and commission first.</p>
+                              {r.seller_confirm_status !== "rejected" && (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => resendReferralConfirm(r)}>Resend confirmation email</button>
+                              )}
+                            </>
                           ) : (
                             <>
                               <span className={`gnt-badge ${r.invite_status === "accepted" ? "approved" : "pending"}`}>
