@@ -618,6 +618,8 @@ export default function App() {
   const [accountActionReason, setAccountActionReason] = useState("");
   const [accountActionError, setAccountActionError] = useState("");
   const [accountActionBusy, setAccountActionBusy] = useState(false);
+  const [reactivationRequested, setReactivationRequested] = useState(false);
+  const [reactivationBusy, setReactivationBusy] = useState(false);
   const [resubmitForm, setResubmitForm] = useState({ companyName: "", cipc: "", dmreLicense: "", address: "" });
   const [resubmitError, setResubmitError] = useState("");
   const [resubmitSaving, setResubmitSaving] = useState(false);
@@ -1365,6 +1367,18 @@ export default function App() {
     setAccountActionReason("");
     await loadMarketBoard();
     showToast("Withdrawal requested — Tankbridge admin will process this shortly. Your data is kept on file, not deleted.");
+  }
+
+  async function submitReactivationRequest() {
+    setReactivationBusy(true);
+    const res = await fetch("/api/notify-reactivation-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companyId: myCompany.id }),
+    }).catch(() => null);
+    setReactivationBusy(false);
+    if (res && res.ok) { setReactivationRequested(true); showToast("Reactivation requested — admin has been notified."); }
+    else showToast("Could not send the request — please try again.", "err");
   }
 
   function startResubmit(company) {
@@ -2766,7 +2780,16 @@ export default function App() {
                   <h3 style={{ fontSize: 18, marginBottom: 6 }}>Account status</h3>
 
                   {myCompany.account_status === "withdrawn" ? (
-                    <div className="gnt-alert-banner"><Lock size={16} /> Your account has been withdrawn and your listings are no longer visible. Contact Tankbridge admin if you'd like to reactivate.</div>
+                    <>
+                      <div className="gnt-alert-banner" style={{ marginBottom: 12 }}><Lock size={16} /> Your account has been withdrawn and your listings are no longer visible.</div>
+                      {reactivationRequested ? (
+                        <p style={{ fontSize: 13, color: "var(--verified)" }}>Reactivation requested — Tankbridge admin has been notified and will follow up by email.</p>
+                      ) : (
+                        <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={reactivationBusy} onClick={submitReactivationRequest}>
+                          {reactivationBusy ? "Sending…" : "Request reactivation"}
+                        </button>
+                      )}
+                    </>
                   ) : myCompany.account_status === "withdrawal_requested" ? (
                     <div className="gnt-alert-banner"><AlertTriangle size={16} /> Withdrawal requested on {fmtDate(myCompany.deactivation_requested_at)} — pending admin review. Your listings are hidden in the meantime.</div>
                   ) : myCompany.account_status === "listings_paused" ? (
