@@ -340,8 +340,9 @@ function DealCard({ deal, myCompany, onReported }) {
       }
     } else {
       const { data } = await supabase.rpc("get_deal_seller_contact", { p_deal_id: deal.id });
-      setGated(false);
-      setInfo((data && data[0]) || null);
+      const success = data && data.length > 0;
+      setGated(!success);
+      setInfo(success ? data[0] : null);
     }
     setChecked(true);
     setLoading(false);
@@ -383,7 +384,7 @@ function DealCard({ deal, myCompany, onReported }) {
           {loading ? "Checking…" : "View contact details"}
         </button>
       ) : gated ? (
-        <div className="gnt-alert-banner"><Lock size={16} /> Buyer identity hidden until you sign the IMFPA above.</div>
+        <div className="gnt-alert-banner"><Lock size={16} /> {isSellerViewing ? "Buyer identity hidden until you sign the IMFPA above." : "Seller hasn't completed their registration and IMFPA sign-off yet — check back soon."}</div>
       ) : info ? (
         <div className="gnt-info-banner"><CheckCircle2 size={16} /> {info.company_name} (CIPC {info.cipc || "—"}) — {info.contact_name}, {info.phone}, {info.email}</div>
       ) : (
@@ -516,6 +517,9 @@ export default function App() {
   const [listingForm, setListingForm] = useState(EMPTY_LISTING);
   const [listingError, setListingError] = useState("");
   const [editingListing, setEditingListing] = useState(null);
+  const [editingBrokerListingId, setEditingBrokerListingId] = useState(null);
+  const [brokerListingForm, setBrokerListingForm] = useState(null);
+  const [brokerListingError, setBrokerListingError] = useState("");
   const [editError, setEditError] = useState("");
   const [showImfpaForm, setShowImfpaForm] = useState(false);
   const [imfpaJustSigned, setImfpaJustSigned] = useState(false);
@@ -1214,10 +1218,12 @@ export default function App() {
     let reveal;
     if (isSellListing) {
       const { data } = await supabase.rpc("get_deal_seller_contact", { p_deal_id: deal.id });
-      reveal = { gated: false, info: (data && data[0]) || null };
+      const gated = !data || data.length === 0;
+      reveal = { gated, reason: gated ? "seller_pending" : null, info: (data && data[0]) || null };
     } else {
       const { data } = await supabase.rpc("get_deal_buyer_contact", { p_deal_id: deal.id });
-      reveal = { gated: !data || data.length === 0, info: (data && data[0]) || null };
+      const gated = !data || data.length === 0;
+      reveal = { gated, reason: gated ? (myCompany?.imfpa_signed ? "buyer_pending" : "imfpa_pending") : null, info: (data && data[0]) || null };
     }
     fetch("/api/notify-accept", {
       method: "POST",
@@ -1377,20 +1383,11 @@ export default function App() {
   async function setReferralStatus(referral, status) {
     const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
-    if (status === "approved") {
-      const res = await fetch("/api/send-referral-invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ referralId: referral.id }),
-      }).catch(() => null);
-      const ok = res && res.ok;
-      showToast(ok
-        ? `Verified — invite email sent to ${referral.referred_company_name}.`
-        : `Verified, but the invite email failed to send. Use "Resend invite" below.`, ok ? "ok" : "err");
-    } else {
-      showToast("Referral rejected.");
-    }
+    showToast(status === "approved"
+      ? `Verified — ${referral.referred_company_name}'s listing is now live on the Market Board. They'll be asked to confirm and complete registration once a real counterparty accepts it.`
+      : "Referral rejected.");
     await loadAdminData();
+    await loadMarketBoard();
   }
 
   async function resendReferralInvite(referral) {
@@ -1401,6 +1398,43 @@ export default function App() {
     }).catch(() => null);
     if (res && res.ok) { showToast("Invite email resent."); await loadAdminData(); }
     else { showToast("Failed to send invite email.", "err"); }
+  }
+
+  async function startEditBrokerListing(referral) {
+    const { data, error } = await supabase.from("listings").select("*").eq("id", referral.listing_id).maybeSingle();
+    if (error || !data) { showToast("Could not load this listing.", "err"); return; }
+    setBrokerListingForm({
+      volume: String(data.volume), unitPrice: String(data.unit_price), location: data.location,
+      terms: data.terms || [], bolTerms: data.bol_terms || "not_offered",
+    });
+    setEditingBrokerListingId(referral.listing_id);
+    setBrokerListingError("");
+  }
+
+  async function saveBrokerListingEdit() {
+    const f = brokerListingForm;
+    if (!f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
+      setBrokerListingError("Please complete all fields and select at least one term."); return;
+    }
+    if (Number(f.volume) < 40000) { setBrokerListingError("Minimum tradable volume is 40,000 litres."); return; }
+    const { error } = await supabase.from("listings").update({
+      volume: Number(f.volume), unit_price: Number(f.unitPrice), location: f.location,
+      terms: f.terms, bol_terms: f.bolTerms,
+    }).eq("id", editingBrokerListingId);
+    if (error) { setBrokerListingError(error.message); return; }
+    setEditingBrokerListingId(null);
+    setBrokerListingForm(null);
+    await loadMyReferrals();
+    await loadMarketBoard();
+    showToast("Listing updated.");
+  }
+
+  async function cancelBrokerListing(referral) {
+    const { error } = await supabase.from("listings").delete().eq("id", referral.listing_id);
+    if (error) { showToast(error.message, "err"); return; }
+    await loadMyReferrals();
+    await loadMarketBoard();
+    showToast("Listing cancelled and removed from the Market Board.");
   }
 
   const pendingCompanies = adminCompanies.filter(c => c.status === "pending");
@@ -1468,6 +1502,11 @@ export default function App() {
               <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
               <h2 style={{ fontSize: 26, marginBottom: 8 }}>You're registered</h2>
               <p style={{ color: "var(--steel)", fontSize: 14 }}>{inviteReferral?.referred_company_name} is now live on the Tankbridge Market Board.</p>
+              {inviteReferral?.referred_type === "seller" && (
+                <div className="gnt-alert-banner" style={{ textAlign: "left", marginTop: 16 }}>
+                  <AlertTriangle size={16} /> One more step — if a buyer has already shown interest, their contact details only release once you sign the IMFPA on your Dashboard. Please do that next.
+                </div>
+              )}
               <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("dashboard")}>Go to my Dashboard</button>
             </div>
           ) : inviteStep === "intro" ? (
@@ -2440,9 +2479,9 @@ export default function App() {
                           <div style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>{r.product} · {Number(r.volume).toLocaleString()} ℓ · {fmtMoney(r.unit_price)}/ℓ · {fmtTerms(r.terms)} · {r.location}</div>
                           {r.status === "approved" && (
                             <div style={{ fontSize: 11.5, color: "var(--steel-soft)", marginTop: 4 }}>
-                              Invite: <strong>{r.invite_status.replace("_", " ")}</strong>
-                              {r.invite_status === "sent" && " — waiting for them to complete registration"}
-                              {r.invite_status === "accepted" && " — live on the Market Board"}
+                              {r.invite_status === "accepted"
+                                ? "Registration completed — trading directly now"
+                                : "Live on the Market Board — they'll be asked to confirm and complete registration once a real counterparty accepts"}
                             </div>
                           )}
                         </div>
@@ -2451,6 +2490,33 @@ export default function App() {
                           {r.commission_amount != null && <div style={{ marginTop: 6, fontWeight: 600 }}>{fmtMoney(r.commission_amount)}</div>}
                         </div>
                       </div>
+                      {r.status === "approved" && r.invite_status !== "accepted" && r.listing_id && (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                          {editingBrokerListingId === r.listing_id ? (
+                            <div>
+                              {brokerListingError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {brokerListingError}</div>}
+                              <div className="gnt-grid2">
+                                <div className="gnt-field"><label>Volume (litres)</label><input type="number" min="40000" value={brokerListingForm.volume} onChange={e => setBrokerListingForm(f => ({ ...f, volume: e.target.value }))} /></div>
+                                <div className="gnt-field"><label>Price (R/litre)</label><input type="number" step="0.01" value={brokerListingForm.unitPrice} onChange={e => setBrokerListingForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
+                              </div>
+                              <div className="gnt-field"><label>Location</label><input value={brokerListingForm.location} onChange={e => setBrokerListingForm(f => ({ ...f, location: e.target.value }))} /></div>
+                              <div className="gnt-field"><label>Terms</label>
+                                <TermsCheckboxGroup value={brokerListingForm.terms} onChange={v => setBrokerListingForm(f => ({ ...f, terms: v }))} />
+                              </div>
+                              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={saveBrokerListingEdit}>Save</button>
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setEditingBrokerListingId(null); setBrokerListingForm(null); }}>Cancel edit</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEditBrokerListing(r)}>Edit listing</button>
+                              <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { if (window.confirm("Cancel and remove this listing from the Market Board?")) cancelBrokerListing(r); }}>Cancel listing</button>
+                            </div>
+                          )}
+                          <p className="hint" style={{ marginTop: 6 }}>You can manage this listing until {r.referred_company_name} completes their own registration — after that, it's under their control.</p>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </>
@@ -2712,11 +2778,12 @@ export default function App() {
                             <span style={{ color: "var(--steel-soft)" }}>—</span>
                           ) : (
                             <>
-                              <span className={`gnt-badge ${r.invite_status === "accepted" ? "approved" : r.invite_status === "sent" ? "pending" : "rejected"}`}>{r.invite_status.replace("_", " ")}</span>
+                              <span className={`gnt-badge ${r.invite_status === "accepted" ? "approved" : "pending"}`}>
+                                {r.invite_status === "accepted" ? "Registration completed" : "Live — awaiting counterparty"}
+                              </span>
+                              <p style={{ fontSize: 10.5, color: "var(--steel-soft)", margin: "4px 0" }}>Listing is already on the Market Board. They'll be emailed to complete registration once a real counterparty accepts.</p>
                               {r.invite_status !== "accepted" && (
-                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ display: "block", marginTop: 6 }} onClick={() => resendReferralInvite(r)}>
-                                  {r.invite_status === "sent" ? "Resend invite" : "Send invite"}
-                                </button>
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => resendReferralInvite(r)}>Send registration link now</button>
                               )}
                             </>
                           )}
@@ -3008,14 +3075,28 @@ export default function App() {
         <div className="gnt-modal-backdrop" onClick={() => setRevealedInfo(null)}>
           <div className="gnt-modal" onClick={e => e.stopPropagation()}>
             {revealedInfo.gated ? (
-              <>
-                <h3 style={{ fontSize: 22, marginBottom: 10 }}><Lock size={18} style={{ verticalAlign: "middle", marginRight: 6 }} />Details pending IMFPA</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}>Your deal has been recorded and Tankbridge admin has been notified. This buyer's contact details will be released once you sign the IMFPA on your Dashboard.</p>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button className="gnt-btn gnt-btn-ink" onClick={() => { setRevealedInfo(null); goto("dashboard"); }}>Go sign IMFPA</button>
+              revealedInfo.reason === "seller_pending" ? (
+                <>
+                  <h3 style={{ fontSize: 22, marginBottom: 10 }}><Lock size={18} style={{ verticalAlign: "middle", marginRight: 6 }} />Waiting for seller confirmation</h3>
+                  <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}>Your acceptance has been recorded and the seller has been notified to complete their registration and sign the IMFPA. You'll be able to see their contact details here, and by email, as soon as they confirm.</p>
                   <button className="gnt-btn gnt-btn-ghost" onClick={() => setRevealedInfo(null)}>Close</button>
-                </div>
-              </>
+                </>
+              ) : revealedInfo.reason === "buyer_pending" ? (
+                <>
+                  <h3 style={{ fontSize: 22, marginBottom: 10 }}><Lock size={18} style={{ verticalAlign: "middle", marginRight: 6 }} />Waiting for buyer confirmation</h3>
+                  <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}>Your acceptance has been recorded. This buyer was introduced by a broker and has been notified to complete their own registration. You'll be able to see their contact details here, and by email, once they confirm.</p>
+                  <button className="gnt-btn gnt-btn-ghost" onClick={() => setRevealedInfo(null)}>Close</button>
+                </>
+              ) : (
+                <>
+                  <h3 style={{ fontSize: 22, marginBottom: 10 }}><Lock size={18} style={{ verticalAlign: "middle", marginRight: 6 }} />Details pending IMFPA</h3>
+                  <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}>Your deal has been recorded and Tankbridge admin has been notified. This buyer's contact details will be released once you sign the IMFPA on your Dashboard (and once the buyer has completed their own registration, if they were introduced by a broker).</p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="gnt-btn gnt-btn-ink" onClick={() => { setRevealedInfo(null); goto("dashboard"); }}>Go sign IMFPA</button>
+                    <button className="gnt-btn gnt-btn-ghost" onClick={() => setRevealedInfo(null)}>Close</button>
+                  </div>
+                </>
+              )
             ) : revealedInfo.info ? (
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 4 }}>{revealedInfo.info.company_name}</h3>
