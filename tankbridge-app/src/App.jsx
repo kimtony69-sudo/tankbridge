@@ -500,6 +500,7 @@ export default function App() {
   const [publicBlacklist, setPublicBlacklist] = useState([]);
   const [adminBlacklist, setAdminBlacklist] = useState([]);
   const [adminBrokerCommissions, setAdminBrokerCommissions] = useState([]);
+  const [adminReferralCompliance, setAdminReferralCompliance] = useState({});
   const [blacklistForm, setBlacklistForm] = useState({ companyName: "", reason: "" });
   const [blacklistError, setBlacklistError] = useState("");
   const [myListings, setMyListings] = useState([]);
@@ -521,6 +522,8 @@ export default function App() {
   const [referralAgree, setReferralAgree] = useState(false);
   const [referralName, setReferralName] = useState("");
   const [referralConfirmOpen, setReferralConfirmOpen] = useState(false);
+  const [referralLicenseFile, setReferralLicenseFile] = useState(null);
+  const [regReferralLicenseFile, setRegReferralLicenseFile] = useState(null);
 
   const [regType, setRegType] = useState("seller");
   const [regStep, setRegStep] = useState("form"); // form -> confirm-email (only if email confirmation required) -> ncnda -> done
@@ -529,6 +532,7 @@ export default function App() {
   const [ncndaName, setNcndaName] = useState("");
   const [ncndaScrolledEnd, setNcndaScrolledEnd] = useState(false);
   const [useCustomNcnda, setUseCustomNcnda] = useState(false);
+  const [regCisKycFile, setRegCisKycFile] = useState(null);
   const [customNcndaFile, setCustomNcndaFile] = useState(null);
   const [customNcndaSubmitting, setCustomNcndaSubmitting] = useState(false);
   const [regError, setRegError] = useState("");
@@ -814,12 +818,13 @@ export default function App() {
     }
 
     if (regType === "broker") {
-      if (!regForm.referredCompanyName || !regForm.referredCipc) return "Please enter the referred company's name and CIPC number.";
+      if (!regForm.referredCompanyName) return "Please enter the referred company's name.";
+      if (regForm.referredType === "buyer" && !regForm.referredCipc) return "Please enter the buyer's CIPC registration number.";
       if (!regForm.referredEmail || !/^\S+@\S+\.\S+$/.test(regForm.referredEmail)) return "A valid email for the referred company is required — Tankbridge will invite them to register directly.";
-      if (regForm.referredType === "seller" && !regForm.referredDmreLicense) return "DMRE wholesale license is required when referring a seller.";
+      if (regForm.referredType === "seller" && !regReferralLicenseFile) return "Please upload a copy of the seller's Wholesale License.";
       if (regForm.referredType === "seller") {
         const rate = Number(regForm.proposedCommissionRate);
-        if (isNaN(rate) || rate < 0.10 || rate > 0.99) return "Proposed commission must be between R0.10 and R0.99 per litre.";
+        if (isNaN(rate) || rate < 0.10 || rate > 0.99) return "Commission agreed with the seller must be between R0.10 and R0.99 per litre.";
       }
       if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
       if (Number(regForm.tradeVolume) < 40000) return "Minimum tradable volume is 40,000 litres.";
@@ -887,12 +892,12 @@ export default function App() {
       if (listingError) console.error("initial listing insert error", listingError);
     }
     if (regType === "broker") {
-      const { error: refError } = await supabase.from("referrals").insert({
+      const { data: refData, error: refError } = await supabase.from("referrals").insert({
         broker_company_id: companyId,
         referred_type: regForm.referredType,
         referred_company_name: regForm.referredCompanyName,
-        referred_cipc: regForm.referredCipc,
-        referred_dmre_license: regForm.referredType === "seller" ? regForm.referredDmreLicense : null,
+        referred_cipc: regForm.referredType === "buyer" ? regForm.referredCipc : null,
+        referred_dmre_license: null,
         referred_email: regForm.referredEmail,
         proposed_commission_rate: regForm.referredType === "seller" ? Number(regForm.proposedCommissionRate) : null,
         product: regForm.product,
@@ -903,8 +908,25 @@ export default function App() {
         agreement_accepted: true,
         agreement_accepted_by: ncndaName,
         agreement_accepted_at: new Date().toISOString(),
-      });
+      }).select().single();
       if (refError) console.error("referral insert error", refError);
+      if (!refError && regForm.referredType === "seller" && regReferralLicenseFile) {
+        const path = `${session.user.id}/referral_wholesale_license/${refData.id}-${regReferralLicenseFile.name}`;
+        const { error: upErr } = await supabase.storage.from("company-docs").upload(path, regReferralLicenseFile);
+        if (!upErr) await supabase.from("referrals").update({ wholesale_license_path: path }).eq("id", refData.id);
+        else console.error("license upload error", upErr);
+      }
+    }
+  }
+
+  async function uploadRegCisKyc(companyId) {
+    if (!regCisKycFile) return;
+    const path = `${session.user.id}/cis_kyc/${Date.now()}-${regCisKycFile.name}`;
+    const { error: upErr } = await supabase.storage.from("company-docs").upload(path, regCisKycFile);
+    if (!upErr) {
+      await supabase.from("company_documents").insert({ company_id: companyId, doc_type: "cis_kyc", file_path: path, file_name: regCisKycFile.name });
+    } else {
+      console.error("CIS/KYC upload error", upErr);
     }
   }
 
@@ -937,6 +959,7 @@ export default function App() {
     // Buyers/sellers get their signup volume/price/location auto-published as their first listing
     // (this listing flips to active automatically when admin approves the company)
     await createInitialListingOrReferral(data.id);
+    if (regType !== "broker") await uploadRegCisKyc(data.id);
 
     setMyCompany(data);
     setRegStep("done");
@@ -977,6 +1000,7 @@ export default function App() {
     await supabase.from("company_documents").insert({ company_id: data.id, doc_type: "custom_ncnda", file_path: path, file_name: customNcndaFile.name });
 
     await createInitialListingOrReferral(data.id);
+    if (regType !== "broker") await uploadRegCisKyc(data.id);
 
     setCustomNcndaSubmitting(false);
     setMyCompany(data);
@@ -1180,18 +1204,21 @@ export default function App() {
   function submitReferral(e) {
     e.preventDefault();
     const f = referralForm;
-    if (!f.referredCompanyName || !f.referredCipc || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
+    if (!f.referredCompanyName || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
       setReferralError("Please complete all required fields."); return;
+    }
+    if (f.referredType === "buyer" && !f.referredCipc) {
+      setReferralError("Please enter the buyer's CIPC registration number."); return;
     }
     if (!f.referredEmail || !/^\S+@\S+\.\S+$/.test(f.referredEmail)) {
       setReferralError("A valid email for the referred company is required — Tankbridge will invite them to register directly."); return;
     }
-    if (f.referredType === "seller" && !f.referredDmreLicense) {
-      setReferralError("DMRE wholesale license is required when referring a seller."); return;
+    if (f.referredType === "seller" && !referralLicenseFile) {
+      setReferralError("Please upload a copy of the seller's Wholesale License."); return;
     }
     if (f.referredType === "seller") {
       const rate = Number(f.proposedCommissionRate);
-      if (isNaN(rate) || rate < 0.10 || rate > 0.99) { setReferralError("Proposed commission must be between R0.10 and R0.99 per litre."); return; }
+      if (isNaN(rate) || rate < 0.10 || rate > 0.99) { setReferralError("Commission agreed with the seller must be between R0.10 and R0.99 per litre."); return; }
     }
     if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
     if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
@@ -1202,12 +1229,12 @@ export default function App() {
   async function confirmSubmitReferral() {
     const f = referralForm;
     const resolvedLocation = f.location === "Other" ? f.locationOther.trim() : f.location;
-    const { error } = await supabase.from("referrals").insert({
+    const { data, error } = await supabase.from("referrals").insert({
       broker_company_id: myCompany.id,
       referred_type: f.referredType,
       referred_company_name: f.referredCompanyName,
-      referred_cipc: f.referredCipc,
-      referred_dmre_license: f.referredType === "seller" ? f.referredDmreLicense : null,
+      referred_cipc: f.referredType === "buyer" ? f.referredCipc : null,
+      referred_dmre_license: null,
       referred_contact_name: f.referredContactName || null,
       referred_phone: f.referredPhone || null,
       referred_email: f.referredEmail || null,
@@ -1221,10 +1248,22 @@ export default function App() {
       agreement_accepted: true,
       agreement_accepted_by: referralName,
       agreement_accepted_at: new Date().toISOString(),
-    });
+    }).select().single();
+    if (error) { setReferralConfirmOpen(false); setReferralError(error.message); return; }
+
+    if (f.referredType === "seller" && referralLicenseFile) {
+      const path = `${session.user.id}/referral_wholesale_license/${data.id}-${referralLicenseFile.name}`;
+      const { error: upErr } = await supabase.storage.from("company-docs").upload(path, referralLicenseFile);
+      if (!upErr) {
+        await supabase.from("referrals").update({ wholesale_license_path: path }).eq("id", data.id);
+      } else {
+        showToast(`Referral submitted, but the license upload failed: ${upErr.message}. Admin will follow up.`, "err");
+      }
+    }
+
     setReferralConfirmOpen(false);
-    if (error) { setReferralError(error.message); return; }
     setReferralForm(EMPTY_REFERRAL);
+    setReferralLicenseFile(null);
     setReferralAgree(false);
     setReferralName("");
     await loadMyReferrals();
@@ -1476,6 +1515,23 @@ export default function App() {
     }).catch(() => null);
     if (res && res.ok) { showToast("Confirmation email resent."); await loadAdminData(); }
     else { showToast("Failed to send confirmation email.", "err"); }
+  }
+
+  async function viewReferralLicense(referral) {
+    const { data, error } = await supabase.storage.from("company-docs").createSignedUrl(referral.wholesale_license_path, 300);
+    if (error) { showToast(error.message, "err"); return; }
+    window.open(data.signedUrl, "_blank");
+  }
+
+  async function saveReferralCompliance(referral) {
+    const entry = adminReferralCompliance[referral.id] || {};
+    const cipc = entry.cipc ?? referral.referred_cipc;
+    const dmre = entry.dmre ?? referral.referred_dmre_license;
+    if (!cipc || !dmre) { showToast("Enter both CIPC and DMRE numbers.", "err"); return; }
+    const { error } = await supabase.from("referrals").update({ referred_cipc: cipc, referred_dmre_license: dmre }).eq("id", referral.id);
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    showToast("CIPC / DMRE numbers saved.");
   }
 
   async function startEditBrokerListing(referral) {
@@ -1987,16 +2043,19 @@ export default function App() {
                       <button type="button" className={regForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReg("referredType", "buyer")}>Referring a Buyer</button>
                     </div>
                     <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={regForm.referredCompanyName} onChange={e => updateReg("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
-                    <div className="gnt-grid2">
+                    {regForm.referredType === "buyer" ? (
                       <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={regForm.referredCipc} onChange={e => updateReg("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                      {regForm.referredType === "seller" && (
-                        <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={regForm.referredDmreLicense} onChange={e => updateReg("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="gnt-field">
+                        <label>Copy of Wholesale License</label>
+                        <input type="file" onChange={e => setRegReferralLicenseFile(e.target.files?.[0] || null)} />
+                        <div className="hint">Admin will review this and confirm the CIPC and DMRE license numbers before approving.</div>
+                      </div>
+                    )}
                     <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={regForm.referredEmail} onChange={e => updateReg("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
                     {regForm.referredType === "seller" && (
-                      <div className="gnt-field"><label>Proposed commission (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={regForm.proposedCommissionRate} onChange={e => updateReg("proposedCommissionRate", e.target.value)} />
-                        <div className="hint">Included in the confirmation email sent to the seller — they must approve this before the listing goes live.</div>
+                      <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={regForm.proposedCommissionRate} onChange={e => updateReg("proposedCommissionRate", e.target.value)} />
+                        <div className="hint">This should already be agreed with the seller directly — it's included in the confirmation email they approve before the listing goes live.</div>
                       </div>
                     )}
                     <div className="gnt-field"><label>Product</label>
@@ -2006,7 +2065,7 @@ export default function App() {
                     </div>
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={regForm.tradeVolume} onChange={e => updateReg("tradeVolume", e.target.value)} placeholder="40000" /></div>
-                      <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={regForm.tradePrice} onChange={e => updateReg("tradePrice", e.target.value)} placeholder="21.45" /></div>
+                      <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Asking price — commission included (R / litre)" : "Price (R / litre)"}</label><input type="number" min="0" step="0.01" value={regForm.tradePrice} onChange={e => updateReg("tradePrice", e.target.value)} placeholder="21.45" /></div>
                     </div>
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Location</label>
@@ -2102,6 +2161,13 @@ export default function App() {
                       <label>Signed NCNDA document</label>
                       <input type="file" onChange={e => setCustomNcndaFile(e.target.files?.[0] || null)} />
                     </div>
+                    {regType !== "broker" && (
+                      <div className="gnt-field">
+                        <label>CIS / KYC document (optional)</label>
+                        <input type="file" onChange={e => setRegCisKycFile(e.target.files?.[0] || null)} />
+                        <div className="hint">Speeds up admin review — you can also add this later from your Dashboard.</div>
+                      </div>
+                    )}
                   </div>
                   <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }} disabled={customNcndaSubmitting}>
                     {customNcndaSubmitting ? "Submitting…" : "Submit custom NCNDA for review"} <FileSignature size={16} />
@@ -2149,6 +2215,13 @@ export default function App() {
                 </label>
                 {!ncndaScrolledEnd && <div className="hint" style={{ marginBottom: 16 }}>Scroll the document above to the end to enable this checkbox.</div>}
                 <div className="gnt-field" style={{ marginTop: 16 }}><label>Type your full legal name to sign</label><input value={ncndaName} onChange={e => setNcndaName(e.target.value)} placeholder="Full name of signatory" /></div>
+                {regType !== "broker" && (
+                  <div className="gnt-field">
+                    <label>CIS / KYC document (optional)</label>
+                    <input type="file" onChange={e => setRegCisKycFile(e.target.files?.[0] || null)} />
+                    <div className="hint">A Corporate Information Sheet or KYC pack speeds up admin review — you can also add this later from your Dashboard.</div>
+                  </div>
+                )}
                 <button className="gnt-btn gnt-btn-amber" type="submit" style={{ width: "100%", justifyContent: "center" }}>Accept &amp; submit registration <FileSignature size={16} /></button>
               </form>
               </>
@@ -2321,6 +2394,16 @@ export default function App() {
                   {docError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {docError}</div>}
                   <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "past_performance")} style={{ marginBottom: 10 }} />
                   {myDocuments.filter(d => d.doc_type === "past_performance").map(d => (
+                    <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                      <span>{d.file_name}</span>
+                      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
+                    </div>
+                  ))}
+
+                  <h4 style={{ fontSize: 14, margin: "20px 0 8px" }}>CIS / KYC document (optional)</h4>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>A Corporate Information Sheet or KYC pack speeds up admin review — private, admin only.</p>
+                  <input type="file" multiple disabled={docUploading} onChange={e => uploadCompanyDoc(Array.from(e.target.files), "cis_kyc")} style={{ marginBottom: 10 }} />
+                  {myDocuments.filter(d => d.doc_type === "cis_kyc").map(d => (
                     <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
                       <span>{d.file_name}</span>
                       <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteCompanyDoc(d)}>Remove</button>
@@ -2566,15 +2649,18 @@ export default function App() {
                       <button type="button" className={referralForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReferralField("referredType", "buyer")}>Referring a Buyer</button>
                     </div>
                     <div className="gnt-field"><label>{referralForm.referredType === "seller" ? "Seller" : "Buyer"} company name</label><input value={referralForm.referredCompanyName} onChange={e => updateReferralField("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
-                    <div className="gnt-grid2">
+                    {referralForm.referredType === "buyer" ? (
                       <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={referralForm.referredCipc} onChange={e => updateReferralField("referredCipc", e.target.value)} placeholder="2019/123456/07" /></div>
-                      {referralForm.referredType === "seller" && (
-                        <div className="gnt-field"><label>DMRE wholesale license no.</label><input className="mono" value={referralForm.referredDmreLicense} onChange={e => updateReferralField("referredDmreLicense", e.target.value)} placeholder="W/2024/0000" /></div>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="gnt-field">
+                        <label>Copy of Wholesale License</label>
+                        <input type="file" onChange={e => setReferralLicenseFile(e.target.files?.[0] || null)} />
+                        <div className="hint">Admin will review this and confirm the CIPC and DMRE license numbers before approving.</div>
+                      </div>
+                    )}
                     {referralForm.referredType === "seller" && (
-                      <div className="gnt-field"><label>Proposed commission (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={referralForm.proposedCommissionRate} onChange={e => updateReferralField("proposedCommissionRate", e.target.value)} />
-                        <div className="hint">Included in the confirmation email sent to the seller — they must approve this before the listing goes live.</div>
+                      <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={referralForm.proposedCommissionRate} onChange={e => updateReferralField("proposedCommissionRate", e.target.value)} />
+                        <div className="hint">This should already be agreed with the seller directly — it's included in the confirmation email they approve before the listing goes live.</div>
                       </div>
                     )}
                     <p style={{ fontSize: 12.5, color: "var(--steel-soft)", margin: "-4px 0 8px" }}>Once admin approves, Tankbridge emails this company an invite to register their own account — they set their own password and go live once they complete it.</p>
@@ -2597,7 +2683,7 @@ export default function App() {
                     </div>
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" step="1000" value={referralForm.volume} onChange={e => updateReferralField("volume", e.target.value)} /></div>
-                      <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={referralForm.unitPrice} onChange={e => updateReferralField("unitPrice", e.target.value)} /></div>
+                      <div className="gnt-field"><label>{referralForm.referredType === "seller" ? "Asking price — commission included (R / litre)" : "Price (R / litre)"}</label><input type="number" min="0" step="0.01" value={referralForm.unitPrice} onChange={e => updateReferralField("unitPrice", e.target.value)} /></div>
                     </div>
                     <div className="gnt-field"><label>Location</label>
                       <select value={referralForm.location} onChange={e => updateReferralField("location", e.target.value)}>
@@ -2944,17 +3030,37 @@ export default function App() {
                             </div>
                           )}
                         </td>
-                        <td className="mono" style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>
-                          CIPC {r.referred_cipc}{r.referred_dmre_license && <><br />DMRE {r.referred_dmre_license}</>}
+                        <td style={{ fontSize: 11.5 }}>
+                          {r.referred_type === "buyer" ? (
+                            <span className="mono" style={{ color: "var(--steel-soft)" }}>CIPC {r.referred_cipc}</span>
+                          ) : (
+                            <div style={{ width: 160 }}>
+                              {r.wholesale_license_path && (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginBottom: 6 }} onClick={() => viewReferralLicense(r)}>View license copy</button>
+                              )}
+                              <input className="mono" placeholder="CIPC no." style={{ marginBottom: 4, padding: "5px 7px", fontSize: 11.5, width: "100%" }}
+                                value={adminReferralCompliance[r.id]?.cipc ?? r.referred_cipc ?? ""}
+                                onChange={e => setAdminReferralCompliance(m => ({ ...m, [r.id]: { ...m[r.id], cipc: e.target.value } }))} />
+                              <input className="mono" placeholder="DMRE no." style={{ marginBottom: 4, padding: "5px 7px", fontSize: 11.5, width: "100%" }}
+                                value={adminReferralCompliance[r.id]?.dmre ?? r.referred_dmre_license ?? ""}
+                                onChange={e => setAdminReferralCompliance(m => ({ ...m, [r.id]: { ...m[r.id], dmre: e.target.value } }))} />
+                              {r.status === "pending" && (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => saveReferralCompliance(r)}>Save numbers</button>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td>{r.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(r.volume).toLocaleString()} ℓ @ {fmtMoney(r.unit_price)} · {fmtTerms(r.terms)} · {r.location}</span></td>
                         <td>
                           <span className={`gnt-badge ${r.status}`}>{r.status}</span>
                           {r.status === "pending" && (
                             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
+                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={r.referred_type === "seller" && (!r.referred_cipc || !r.referred_dmre_license)} onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
                               <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setReferralStatus(r, "rejected")}>Reject</button>
                             </div>
+                          )}
+                          {r.status === "pending" && r.referred_type === "seller" && (!r.referred_cipc || !r.referred_dmre_license) && (
+                            <p style={{ fontSize: 10.5, color: "var(--alert)", marginTop: 4 }}>Enter and save CIPC + DMRE from the license copy before approving.</p>
                           )}
                         </td>
                         <td style={{ fontSize: 11.5 }}>
@@ -3108,7 +3214,7 @@ export default function App() {
                 <div className="dt" style={{ marginBottom: 6 }}>Uploaded documents</div>
                 {detailDocuments.map(d => (
                   <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
-                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : d.doc_type === "tank_report" ? "Tank report / POP" : "Past performance"})</span></span>
+                    <span>{d.file_name} <span style={{ color: "var(--steel-soft)", fontSize: 11 }}>({d.doc_type === "mandate_proof" ? "Mandate proof" : d.doc_type === "tank_report" ? "Tank report / POP" : d.doc_type === "cis_kyc" ? "CIS / KYC" : "Past performance"})</span></span>
                     <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => viewCompanyDoc(d)}>View</button>
                   </div>
                 ))}
