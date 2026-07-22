@@ -2184,7 +2184,7 @@ export default function App() {
               <div>
                 <div className="gnt-eyebrow">Verified Bulk Fuel Trading</div>
                 <h1>Zero friction.<br /><span>Verified before it's visible.</span></h1>
-                <p className="lead">South Africa's bulk diesel market runs on ghost volumes, unverified allocations and unregulated brokers. Tankbridge is the trust layer — vetted, licensed counterparties trading 40,000ℓ+ lots under COC, COD, ITT or TTO terms, with transparent pricing and fixed, disclosed commission.</p>
+                <p className="lead">South Africa's bulk diesel market runs on ghost volumes, unverified allocations and unregulated brokers. Tankbridge is the compliance layer — CIPC- and DMRE-verified counterparties trading 40,000ℓ+ lots under COC, COD, ITT or TTO terms, with transparent pricing and fixed, disclosed commission. Proof of Product and Proof of Funds stay exactly where they belong: between you and your counterparty.</p>
                 <div className="gnt-hero-ctas">
                   <button className="gnt-btn gnt-btn-amber" onClick={resetRegFlow}>Register your company <ChevronRight size={16} /></button>
                   <button className="gnt-btn gnt-btn-outline" onClick={() => goto("market")}>View Market Board</button>
@@ -2236,12 +2236,12 @@ export default function App() {
               <div className="gnt-card">
                 <ShieldCheck size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Pre-vetted, compliant</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every participant is CIPC- and DMRE-screened before a single litre is listed or bid on. Proven trade history earns a Verified badge, so trusted counterparties stand out.</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every participant is CIPC- and DMRE-screened before a single litre is listed or bid on — a compliance check, not a substitute for your own commercial due diligence. Proven trade history earns a Verified badge, so trusted counterparties stand out.</p>
               </div>
               <div className="gnt-card">
                 <BadgeCheck size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Own it or represent it — clearly labelled</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every seller declares Title Holder or Mandate/Allocation status; every buyer declares direct funds or a financier. Proof of Product and Proof of Funds stay between the two parties — Tankbridge makes sure everyone starts from the same page.</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every seller declares Title Holder or Mandate/Allocation status; every buyer declares direct funds or a financier. Proof of Product and Proof of Funds stay between the two parties — Tankbridge makes sure everyone starts from the same page. We verify who's who — you verify what's real.</p>
               </div>
               <div className="gnt-card">
                 <FileSignature size={22} color="#3f6b52" />
