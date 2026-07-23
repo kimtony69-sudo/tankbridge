@@ -1,13 +1,14 @@
 // This runs on Vercel as a serverless function at /api/send-referral-email
-// Consolidates three referral-related emails into one endpoint (Vercel Hobby
-// plan caps serverless functions at 12, so these were merged from separate
-// files: send-referral-invite.js, send-referral-confirm.js, send-co-broker-claim.js).
+// Consolidates referral-related emails into one endpoint (Vercel Hobby plan
+// caps serverless functions at 12).
 //
-// POST body: { type: "invite" | "confirm" | "co_broker_claim", referralId }
+// POST body: { type, referralId, reason? }
 //
 // - "invite": referred buyer/seller registration invite (after admin approval)
 // - "confirm": seller price/commission confirmation (no login required)
 // - "co_broker_claim": upstream broker/mandate relationship confirmation
+// - "admin_new_referral": tells admin a new referral needs review
+// - "rejected": tells the submitting broker/mandate their referral was rejected (with reason)
 
 async function sendResendEmail({ to, subject, html }) {
   const res = await fetch("https://api.resend.com/emails", {
@@ -42,10 +43,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { type, referralId } = req.body || {};
+  const { type, referralId, reason } = req.body || {};
   if (!referralId) return res.status(400).json({ error: "Missing referralId" });
-  if (!["invite", "confirm", "co_broker_claim"].includes(type)) {
-    return res.status(400).json({ error: "Invalid type — must be invite, confirm, or co_broker_claim" });
+  if (!["invite", "confirm", "co_broker_claim", "admin_new_referral", "rejected"].includes(type)) {
+    return res.status(400).json({ error: "Invalid type" });
   }
 
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -55,8 +56,44 @@ export default async function handler(req, res) {
     const referral = (await sbFetch(`referrals?id=eq.${referralId}&select=*`, serviceKey, supabaseUrl))?.[0];
     if (!referral) return res.status(404).json({ error: "Referral not found" });
 
-    const broker = (await sbFetch(`companies?id=eq.${referral.broker_company_id}&select=company_name`, serviceKey, supabaseUrl))?.[0];
+    const broker = (await sbFetch(`companies?id=eq.${referral.broker_company_id}&select=company_name,email`, serviceKey, supabaseUrl))?.[0];
     const terms = Array.isArray(referral.terms) ? referral.terms.join(" / ") : referral.terms;
+
+    if (type === "admin_new_referral") {
+      const label = referral.is_co_broker_referral ? "hand-off (mandate)" : "direct";
+      await sendResendEmail({
+        to: process.env.ADMIN_EMAIL,
+        subject: `New referral submitted — ${referral.referred_company_name || "(mandate handoff)"} (${referral.referred_type})`,
+        html: `
+          <h2>New referral needs review</h2>
+          <p><strong>${broker?.company_name || "A broker"}</strong> submitted a ${label} referral for a <strong>${referral.referred_type}</strong>:</p>
+          <p><strong>Company (as best known):</strong> ${referral.referred_company_name || "-"}</p>
+          <p><strong>Product:</strong> ${referral.product}</p>
+          <p><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
+          <p><strong>Price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
+          <p><strong>Terms:</strong> ${terms}</p>
+          <p><strong>Location:</strong> ${referral.location}</p>
+          <p><a href="https://tankbridge.co.za/#admin">Open the Admin dashboard to review</a></p>
+        `,
+      });
+      return res.status(200).json({ ok: true });
+    }
+
+    if (type === "rejected") {
+      if (!broker?.email || broker.email === "-") return res.status(200).json({ ok: true, skipped: true });
+      await sendResendEmail({
+        to: broker.email,
+        subject: `Your referral wasn't approved — ${referral.referred_company_name || referral.referred_type}`,
+        html: `
+          <h2>Your referral was not approved</h2>
+          <p>Hi ${broker.company_name},</p>
+          <p>Your referral for <strong>${referral.referred_company_name || `a ${referral.referred_type}`}</strong> (${referral.product}, ${Number(referral.volume).toLocaleString()} litres) was reviewed by Tankbridge admin and was not approved.</p>
+          ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+          <p>No details were shared with the referred party at this stage. Feel free to submit a corrected referral from your Dashboard, or contact admin with any questions.</p>
+        `,
+      });
+      return res.status(200).json({ ok: true });
+    }
 
     if (type === "invite") {
       if (referral.status !== "approved") return res.status(400).json({ error: "Referral is not approved yet." });
@@ -67,16 +104,21 @@ export default async function handler(req, res) {
 
       await sendResendEmail({
         to: referral.referred_email,
-        subject: `${broker?.company_name || "A broker"} wants to register you on Tankbridge`,
+        subject: `You've been recommended for Tankbridge — South Africa's verified diesel marketplace`,
         html: `
-          <h2>You've been introduced to Tankbridge</h2>
-          <p><strong>${broker?.company_name || "A broker"}</strong> has introduced <strong>${referral.referred_company_name}</strong> to Tankbridge as a ${roleLabel}, for:</p>
+          <h2>${broker?.company_name || "A trading partner"} thinks you'd be a good fit for Tankbridge</h2>
+          <p><strong>${broker?.company_name || "A broker"}</strong> has recommended <strong>${referral.referred_company_name}</strong> to join Tankbridge as a ${roleLabel}, based on the deal below.</p>
+          <div style="background:#f6f4ec;padding:14px 16px;margin:16px 0;">
+            <p style="margin:0 0 6px;font-weight:bold;">What Tankbridge is:</p>
+            <p style="margin:0;font-size:14px;">A verified B2B marketplace for bulk diesel — every counterparty is CIPC/DMRE-checked, identities stay anonymous until both sides agree on price, and it's completely free to register.</p>
+          </div>
+          <p><strong>The deal on the table:</strong></p>
           <p>${referral.product} · ${Number(referral.volume).toLocaleString()} litres · R ${Number(referral.unit_price).toFixed(2)}/litre · ${referral.location}</p>
-          <p>If you'd like to register, click below to complete your own account (choose your own password, review the details, and go live once submitted):</p>
+          <p>Setting up your account takes a couple of minutes — choose your own password, confirm your details, and you're live on the Market Board.</p>
           <p style="margin-top:20px;">
-            <a href="${inviteUrl}" style="background:#e39a2d;color:#101b28;padding:12px 20px;text-decoration:none;font-weight:bold;">Complete registration</a>
+            <a href="${inviteUrl}" style="background:#e39a2d;color:#101b28;padding:12px 20px;text-decoration:none;font-weight:bold;">Yes, set up my account</a>
           </p>
-          <p style="font-size:12px;color:#888;margin-top:20px;">If you weren't expecting this, you can safely ignore this email.</p>
+          <p style="font-size:12px;color:#888;margin-top:20px;">No cost, no obligation — you're only ever matched with verified counterparties, and nothing is shared until you're ready. If this isn't relevant to you, feel free to ignore this email.</p>
         `,
       });
 
@@ -95,20 +137,23 @@ export default async function handler(req, res) {
 
       await sendResendEmail({
         to: referral.referred_email,
-        subject: `${broker?.company_name || "A broker"} wants to list this for you — please confirm`,
+        subject: `Your listing is ready to go live on Tankbridge — just confirm`,
         html: `
-          <h2>Please confirm your listing details</h2>
-          <p><strong>${broker?.company_name || "A broker"}</strong> has proposed listing <strong>${referral.referred_company_name}</strong> as a seller on Tankbridge, with these terms:</p>
-          <p><strong>Product:</strong> ${referral.product}</p>
-          <p><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
-          <p><strong>Asking price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
-          <p><strong>Terms:</strong> ${terms}</p>
-          <p><strong>Location:</strong> ${referral.location}</p>
-          <p><strong>Proposed commission:</strong> R ${Number(referral.proposed_commission_rate || 0.10).toFixed(2)} / litre</p>
-          <p>Please confirm these are correct — your listing only goes live on the Market Board once you approve.</p>
+          <h2>You're one click away from a verified listing</h2>
+          <p><strong>${broker?.company_name || "A broker"}</strong> has set up a listing for <strong>${referral.referred_company_name}</strong> on Tankbridge — South Africa's verified B2B marketplace for bulk diesel. Every buyer on the platform is CIPC/DMRE-checked before they ever see your listing, and your identity stays anonymous until a real buyer commits.</p>
+          <div style="background:#f6f4ec;padding:14px 16px;margin:16px 0;">
+            <p style="margin:0 0 6px;font-weight:bold;">Your listing:</p>
+            <p style="margin:2px 0;"><strong>Product:</strong> ${referral.product}</p>
+            <p style="margin:2px 0;"><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
+            <p style="margin:2px 0;"><strong>Asking price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
+            <p style="margin:2px 0;"><strong>Terms:</strong> ${terms}</p>
+            <p style="margin:2px 0;"><strong>Location:</strong> ${referral.location}</p>
+            <p style="margin:2px 0;"><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate || 0.10).toFixed(2)} / litre</p>
+          </div>
+          <p>If this all looks right, one click puts you live on the Market Board — free to list, no obligation, and you're only ever contacted once a real, verified buyer accepts.</p>
           <p style="margin-top:20px;">
-            <a href="${base}&decision=approve" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;margin-right:10px;">Approve &amp; list it</a>
-            <a href="${base}&decision=reject" style="background:#a63b32;color:#ece8de;padding:11px 18px;text-decoration:none;font-weight:bold;">This isn't right</a>
+            <a href="${base}&decision=approve" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;margin-right:10px;">Yes, list it</a>
+            <a href="${base}&decision=reject" style="background:#a63b32;color:#ece8de;padding:11px 18px;text-decoration:none;font-weight:bold;">Something's not right</a>
           </p>
           <p style="font-size:12px;color:#888;margin-top:20px;">No login needed — these links take you straight to a confirmation page.</p>
         `,
