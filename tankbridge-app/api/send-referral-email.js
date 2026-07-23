@@ -38,6 +38,14 @@ async function sbFetch(path, serviceKey, supabaseUrl) {
   return res.json();
 }
 
+async function sbPatch(path, body, serviceKey, supabaseUrl) {
+  await fetch(`${supabaseUrl}/rest/v1/${path}`, {
+    method: "PATCH",
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(body),
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -135,29 +143,35 @@ export default async function handler(req, res) {
 
       const base = `https://tankbridge.co.za/?referral_confirm=1&token=${referral.seller_confirm_token}`;
 
-      await sendResendEmail({
-        to: referral.referred_email,
-        subject: `Your listing is ready to go live on Tankbridge — just confirm`,
-        html: `
-          <h2>You're one click away from a verified listing</h2>
-          <p><strong>${broker?.company_name || "A broker"}</strong> has set up a listing for <strong>${referral.referred_company_name}</strong> on Tankbridge — South Africa's verified B2B marketplace for bulk diesel. Every buyer on the platform is CIPC/DMRE-checked before they ever see your listing, and your identity stays anonymous until a real buyer commits.</p>
-          <div style="background:#f6f4ec;padding:14px 16px;margin:16px 0;">
-            <p style="margin:0 0 6px;font-weight:bold;">Your listing:</p>
-            <p style="margin:2px 0;"><strong>Product:</strong> ${referral.product}</p>
-            <p style="margin:2px 0;"><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
-            <p style="margin:2px 0;"><strong>Asking price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
-            <p style="margin:2px 0;"><strong>Terms:</strong> ${terms}</p>
-            <p style="margin:2px 0;"><strong>Location:</strong> ${referral.location}</p>
-            <p style="margin:2px 0;"><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate || 0.10).toFixed(2)} / litre</p>
-          </div>
-          <p>If this all looks right, one click puts you live on the Market Board — free to list, no obligation, and you're only ever contacted once a real, verified buyer accepts.</p>
-          <p style="margin-top:20px;">
-            <a href="${base}&decision=approve" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;margin-right:10px;">Yes, list it</a>
-            <a href="${base}&decision=reject" style="background:#a63b32;color:#ece8de;padding:11px 18px;text-decoration:none;font-weight:bold;">Something's not right</a>
-          </p>
-          <p style="font-size:12px;color:#888;margin-top:20px;">No login needed — these links take you straight to a confirmation page.</p>
-        `,
-      });
+      try {
+        await sendResendEmail({
+          to: referral.referred_email,
+          subject: `Your listing is ready to go live on Tankbridge — just confirm`,
+          html: `
+            <h2>You're one click away from a verified listing</h2>
+            <p><strong>${broker?.company_name || "A broker"}</strong> has set up a listing for <strong>${referral.referred_company_name}</strong> on Tankbridge — South Africa's verified B2B marketplace for bulk diesel. Every buyer on the platform is CIPC/DMRE-checked before they ever see your listing, and your identity stays anonymous until a real buyer commits.</p>
+            <div style="background:#f6f4ec;padding:14px 16px;margin:16px 0;">
+              <p style="margin:0 0 6px;font-weight:bold;">Your listing:</p>
+              <p style="margin:2px 0;"><strong>Product:</strong> ${referral.product}</p>
+              <p style="margin:2px 0;"><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
+              <p style="margin:2px 0;"><strong>Asking price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
+              <p style="margin:2px 0;"><strong>Terms:</strong> ${terms}</p>
+              <p style="margin:2px 0;"><strong>Location:</strong> ${referral.location}</p>
+              <p style="margin:2px 0;"><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate || 0.10).toFixed(2)} / litre</p>
+            </div>
+            <p>If this all looks right, one click puts you live on the Market Board — free to list, no obligation, and you're only ever contacted once a real, verified buyer accepts.</p>
+            <p style="margin-top:20px;">
+              <a href="${base}&decision=approve" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;margin-right:10px;">Yes, list it</a>
+              <a href="${base}&decision=reject" style="background:#a63b32;color:#ece8de;padding:11px 18px;text-decoration:none;font-weight:bold;">Something's not right</a>
+            </p>
+            <p style="font-size:12px;color:#888;margin-top:20px;">No login needed — these links take you straight to a confirmation page.</p>
+          `,
+        });
+        await sbPatch(`referrals?id=eq.${referralId}`, { seller_confirm_email_status: "sent", seller_confirm_email_sent_at: new Date().toISOString(), seller_confirm_email_error: null }, serviceKey, supabaseUrl);
+      } catch (emailErr) {
+        await sbPatch(`referrals?id=eq.${referralId}`, { seller_confirm_email_status: "failed", seller_confirm_email_sent_at: new Date().toISOString(), seller_confirm_email_error: emailErr.message }, serviceKey, supabaseUrl);
+        return res.status(500).json({ error: "Failed to send confirmation email", detail: emailErr.message });
+      }
     }
 
     if (type === "co_broker_claim") {
@@ -167,26 +181,32 @@ export default async function handler(req, res) {
       const claimUrl = `https://tankbridge.co.za/?co_broker_claim=1&token=${referral.co_broker_confirm_token}`;
       const splitPct = Math.round(Number(referral.co_broker_split_pct) * 100);
 
-      await sendResendEmail({
-        to: referral.co_broker_upstream_email,
-        subject: `${broker?.company_name || "A broker"} wants to register this ${referral.referred_type}'s listing — do you know them?`,
-        html: `
-          <h2>Do you know this ${referral.referred_type}?</h2>
-          <p><strong>${broker?.company_name || "A broker"}</strong> is trying to register the listing below with Tankbridge, for a ${referral.referred_type} matching:</p>
-          <p><strong>Company (as best known):</strong> ${referral.referred_company_name || "-"}</p>
-          <p><strong>Product:</strong> ${referral.product}</p>
-          <p><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
-          <p><strong>Price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
-          <p><strong>Terms:</strong> ${terms}</p>
-          <p><strong>Location:</strong> ${referral.location}</p>
-          ${referral.referred_type === "seller" && referral.proposed_commission_rate ? `<p><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate).toFixed(2)} / litre</p>` : ""}
-          <p>If you confirm, you'll register this ${referral.referred_type} yourself with the real details, and you'll share the 30% Tankbridge broker commission: <strong>${100 - splitPct}% to you, ${splitPct}% to ${broker?.company_name || "the introducing broker"}</strong>.</p>
-          <p style="margin-top:20px;">
-            <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">I know them — let's proceed</a>
-          </p>
-          <p style="font-size:12px;color:#888;margin-top:16px;">You'll need a free Tankbridge broker account to complete this (register or log in first, then reopen this link). If you don't recognise this company, you can decline from the same link.</p>
-        `,
-      });
+      try {
+        await sendResendEmail({
+          to: referral.co_broker_upstream_email,
+          subject: `${broker?.company_name || "A broker"} wants to register this ${referral.referred_type}'s listing — do you know them?`,
+          html: `
+            <h2>Do you know this ${referral.referred_type}?</h2>
+            <p><strong>${broker?.company_name || "A broker"}</strong> is trying to register the listing below with Tankbridge, for a ${referral.referred_type} matching:</p>
+            <p><strong>Company (as best known):</strong> ${referral.referred_company_name || "-"}</p>
+            <p><strong>Product:</strong> ${referral.product}</p>
+            <p><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
+            <p><strong>Price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
+            <p><strong>Terms:</strong> ${terms}</p>
+            <p><strong>Location:</strong> ${referral.location}</p>
+            ${referral.referred_type === "seller" && referral.proposed_commission_rate ? `<p><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate).toFixed(2)} / litre</p>` : ""}
+            <p>If you confirm, you'll register this ${referral.referred_type} yourself with the real details, and you'll share the 30% Tankbridge broker commission: <strong>${100 - splitPct}% to you, ${splitPct}% to ${broker?.company_name || "the introducing broker"}</strong>.</p>
+            <p style="margin-top:20px;">
+              <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">I know them — let's proceed</a>
+            </p>
+            <p style="font-size:12px;color:#888;margin-top:16px;">You'll need a free Tankbridge broker account to complete this (register or log in first, then reopen this link). If you don't recognise this company, you can decline from the same link.</p>
+          `,
+        });
+        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_email_status: "sent", co_broker_email_sent_at: new Date().toISOString(), co_broker_email_error: null }, serviceKey, supabaseUrl);
+      } catch (emailErr) {
+        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_email_status: "failed", co_broker_email_sent_at: new Date().toISOString(), co_broker_email_error: emailErr.message }, serviceKey, supabaseUrl);
+        return res.status(500).json({ error: "Failed to send confirmation email", detail: emailErr.message });
+      }
     }
 
     return res.status(200).json({ ok: true });
