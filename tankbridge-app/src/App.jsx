@@ -67,7 +67,7 @@ const EMPTY_REG = {
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "0.10",
-  hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerSplitPct: "0.50",
+  hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed" };
 const EMPTY_REFERRAL = {
@@ -75,7 +75,7 @@ const EMPTY_REFERRAL = {
   referredContactName: "", referredPhone: "", referredEmail: "",
   product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: [], notes: "",
   proposedCommissionRate: "0.10",
-  hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerSplitPct: "0.50",
+  hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
 };
 
 function toggleTerm(list, term) {
@@ -989,10 +989,15 @@ export default function App() {
         if (regForm.tradeLocation === "Other" && !regForm.tradeLocationOther.trim()) return "Please enter a location.";
         if (!regForm.tradeTerms || regForm.tradeTerms.length === 0) return "Select at least one trading term.";
         if (!regForm.upstreamBrokerName || !regForm.upstreamBrokerEmail || !/^\S+@\S+\.\S+$/.test(regForm.upstreamBrokerEmail)) {
-          return "Please enter the upstream broker/mandate's name and a valid email.";
+          return "Please enter the Mandate's name and a valid email.";
         }
-        const split = Number(regForm.coBrokerSplitPct);
-        if (isNaN(split) || split <= 0 || split >= 1) return "Split must be a share between 0 and 1 (e.g. 0.50 for 50%).";
+        if (regForm.coBrokerShareMode === "fixed") {
+          const fixed = Number(regForm.coBrokerFixedAmount);
+          if (isNaN(fixed) || fixed <= 0) return "Please enter a valid fixed amount (R/litre).";
+        } else {
+          const split = Number(regForm.coBrokerSplitPct);
+          if (isNaN(split) || split <= 0 || split >= 1) return "Split must be a share between 0 and 1 (e.g. 0.50 for 50%).";
+        }
         return "";
       }
       if (!regForm.referredCompanyName) return "Please enter the referred company's name.";
@@ -1080,7 +1085,9 @@ export default function App() {
         is_co_broker_referral: true,
         co_broker_upstream_name: regForm.upstreamBrokerName,
         co_broker_upstream_email: regForm.upstreamBrokerEmail,
-        co_broker_split_pct: Number(regForm.coBrokerSplitPct),
+        co_broker_share_mode: regForm.coBrokerShareMode,
+        co_broker_split_pct: regForm.coBrokerShareMode === "percentage" ? Number(regForm.coBrokerSplitPct) : null,
+        co_broker_fixed_amount: regForm.coBrokerShareMode === "fixed" ? Number(regForm.coBrokerFixedAmount) : null,
         agreement_accepted: true,
         agreement_accepted_by: ncndaName,
         agreement_accepted_at: new Date().toISOString(),
@@ -1478,10 +1485,15 @@ export default function App() {
         setReferralError("Please complete all required fields."); return;
       }
       if (!f.upstreamBrokerName || !f.upstreamBrokerEmail || !/^\S+@\S+\.\S+$/.test(f.upstreamBrokerEmail)) {
-        setReferralError("Please enter the upstream broker's name and a valid email."); return;
+        setReferralError("Please enter the Mandate's name and a valid email."); return;
       }
-      const split = Number(f.coBrokerSplitPct);
-      if (isNaN(split) || split <= 0 || split >= 1) { setReferralError("Split must be a share between 0 and 1 (e.g. 0.50 for 50%)."); return; }
+      if (f.coBrokerShareMode === "fixed") {
+        const fixed = Number(f.coBrokerFixedAmount);
+        if (isNaN(fixed) || fixed <= 0) { setReferralError("Please enter a valid fixed amount (R/litre)."); return; }
+      } else {
+        const split = Number(f.coBrokerSplitPct);
+        if (isNaN(split) || split <= 0 || split >= 1) { setReferralError("Split must be a share between 0 and 1 (e.g. 0.50 for 50%)."); return; }
+      }
       if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
       if (!referralAgree || referralName.trim().length < 3) { setReferralError("Please accept the Referral Agreement and enter your full name."); return; }
       setReferralError("");
@@ -1528,7 +1540,9 @@ export default function App() {
         is_co_broker_referral: true,
         co_broker_upstream_name: f.upstreamBrokerName,
         co_broker_upstream_email: f.upstreamBrokerEmail,
-        co_broker_split_pct: Number(f.coBrokerSplitPct),
+        co_broker_share_mode: f.coBrokerShareMode,
+        co_broker_split_pct: f.coBrokerShareMode === "percentage" ? Number(f.coBrokerSplitPct) : null,
+        co_broker_fixed_amount: f.coBrokerShareMode === "fixed" ? Number(f.coBrokerFixedAmount) : null,
         agreement_accepted: true,
         agreement_accepted_by: referralName,
         agreement_accepted_at: new Date().toISOString(),
@@ -1543,7 +1557,7 @@ export default function App() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "admin_new_referral", referralId: data.id }),
       }).catch(() => {});
-      showToast("Handoff request submitted — admin will verify, then contact the upstream broker to confirm.");
+      showToast("Handoff request submitted — admin will verify, then contact the Mandate to confirm.");
       return;
     }
 
@@ -2037,7 +2051,7 @@ export default function App() {
         body: JSON.stringify({ type: "co_broker_claim", referralId: referral.id }),
       }).catch(() => null);
       showToast(res && res.ok
-        ? `Verified — the upstream broker has been emailed to confirm the relationship.`
+        ? `Verified — the Mandate has been emailed to confirm the relationship.`
         : `Verified, but the confirmation email failed to send. Use "Resend confirmation" below.`, res && res.ok ? "ok" : "err");
     } else if (status === "approved" && referral.referred_type === "seller") {
       const res = await fetch("/api/send-referral-email", {
@@ -2308,7 +2322,10 @@ export default function App() {
           ) : (
             <form onSubmit={submitCoBrokerClaim} className="gnt-card" style={{ padding: "32px 28px" }}>
               <h2 style={{ fontSize: 22, marginBottom: 6 }}>Confirm and register this {coBrokerClaimData.referred_type}</h2>
-              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}><strong>{coBrokerClaimData.originating_broker_name}</strong> introduced this — please correct any details below with what you actually know, since you're vouching for it. You'll split the 30% commission {Math.round((1 - coBrokerClaimData.co_broker_split_pct) * 100)}% you / {Math.round(coBrokerClaimData.co_broker_split_pct * 100)}% {coBrokerClaimData.originating_broker_name}.</p>
+              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}><strong>{coBrokerClaimData.originating_broker_name}</strong> introduced this — please correct any details below with what you actually know, since you're vouching for it. {coBrokerClaimData.co_broker_share_mode === "fixed"
+                ? <>Of the brokerage fee on this deal: <strong>{coBrokerClaimData.originating_broker_name} keeps R {Number(coBrokerClaimData.co_broker_fixed_amount).toFixed(2)}/litre first, and you get whatever's left.</strong></>
+                : <>You'll split the brokerage fee <strong>{Math.round((1 - coBrokerClaimData.co_broker_split_pct) * 100)}% you / {Math.round(coBrokerClaimData.co_broker_split_pct * 100)}% {coBrokerClaimData.originating_broker_name}</strong>.</>
+              }</p>
               {coBrokerClaimError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {coBrokerClaimError}</div>}
               <div className="gnt-field"><label>Company name</label><input value={coBrokerClaimForm.companyName} onChange={e => setCoBrokerClaimForm(f => ({ ...f, companyName: e.target.value }))} /></div>
               {coBrokerClaimData.referred_type === "buyer" ? (
@@ -2664,7 +2681,11 @@ export default function App() {
           {regStep === "form" && (
             <>
               <h2 style={{ fontSize: 32, marginBottom: 6 }}>Register your company</h2>
-              <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 24 }}>Your registration goes to Tankbridge admin for manual approval before it appears anywhere on the platform.</p>
+              {regType === "broker" ? (
+                <p style={{ color: "var(--steel)", fontSize: 14, marginBottom: 24 }}>Your registration goes to Tankbridge admin for manual approval before it appears anywhere on the platform.</p>
+              ) : (
+                <p style={{ color: "var(--ink)", fontSize: 17, fontWeight: 600, marginBottom: 24 }}>After admin approval, your volume, price, and terms show on the Market Board — your identity stays anonymous until a buyer (or seller) accepts your price and terms.</p>
+              )}
               <div className="gnt-type-toggle">
                 <button className={regType === "seller" ? "active" : ""} onClick={() => setRegType("seller")} type="button">I am a Seller</button>
                 <button className={regType === "buyer" ? "active" : ""} onClick={() => setRegType("buyer")} type="button">I am a Buyer</button>
@@ -2728,12 +2749,25 @@ export default function App() {
                     </div>
                     {!regForm.hasDirectRelationship && (
                       <div className="gnt-card" style={{ marginBottom: 16 }}>
-                        <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Tankbridge will contact the broker/mandate below to confirm they actually have this relationship and complete the real registration. You're credited a share of the commission once they do — no company email/CIPC needed from you here.</p>
+                        <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Tankbridge will contact the Mandate below to confirm they actually have this relationship and complete the real registration. You're credited a share of the commission once they do — no company email/CIPC needed from you here.</p>
                         <div className="gnt-grid2">
-                          <div className="gnt-field"><label>Upstream broker/mandate's name</label><input value={regForm.upstreamBrokerName} onChange={e => updateReg("upstreamBrokerName", e.target.value)} /></div>
-                          <div className="gnt-field"><label>Upstream broker/mandate's email</label><input type="email" value={regForm.upstreamBrokerEmail} onChange={e => updateReg("upstreamBrokerEmail", e.target.value)} placeholder="them@brokerco.co.za" /></div>
+                          <div className="gnt-field"><label>Mandate's name</label><input value={regForm.upstreamBrokerName} onChange={e => updateReg("upstreamBrokerName", e.target.value)} /></div>
+                          <div className="gnt-field"><label>Mandate's email</label><input type="email" value={regForm.upstreamBrokerEmail} onChange={e => updateReg("upstreamBrokerEmail", e.target.value)} placeholder="them@brokerco.co.za" /></div>
                         </div>
-                        <div className="gnt-field"><label>Your share of the 30% broker commission (0–1, e.g. 0.50 = 50%)</label><input type="number" min="0.01" max="0.99" step="0.05" value={regForm.coBrokerSplitPct} onChange={e => updateReg("coBrokerSplitPct", e.target.value)} /></div>
+                        <div className="gnt-field"><label>Your share of the broker commission (rate varies by deal — split with the Mandate)</label>
+                          <div className="gnt-type-toggle" style={{ marginBottom: 10 }}>
+                            <button type="button" className={regForm.coBrokerShareMode === "percentage" ? "active" : ""} onClick={() => updateReg("coBrokerShareMode", "percentage")}>Percentage split</button>
+                            <button type="button" className={regForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReg("coBrokerShareMode", "fixed")}>Fixed amount (R/ℓ)</button>
+                          </div>
+                          {regForm.coBrokerShareMode === "percentage" ? (
+                            <input type="number" min="0.01" max="0.99" step="0.05" value={regForm.coBrokerSplitPct} onChange={e => updateReg("coBrokerSplitPct", e.target.value)} placeholder="0.50 = 50%" />
+                          ) : (
+                            <>
+                              <input type="number" min="0" step="0.01" value={regForm.coBrokerFixedAmount} onChange={e => updateReg("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 0.05" />
+                              <div className="hint">You're guaranteed this much per litre first; the Mandate gets whatever's left of the commission.</div>
+                            </>
+                          )}
+                        </div>
                       </div>
                     )}
                     <div className="gnt-field"><label>{regForm.referredType === "seller" ? "Seller" : "Buyer"} company name{!regForm.hasDirectRelationship && " (best known)"}</label><input value={regForm.referredCompanyName} onChange={e => updateReg("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
@@ -3452,12 +3486,25 @@ export default function App() {
                     </div>
                     {!referralForm.hasDirectRelationship && (
                       <div className="gnt-card" style={{ marginBottom: 16 }}>
-                        <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Tankbridge will contact the broker below to confirm they actually have this relationship and complete the real registration. You're credited a share of the commission once they do — no company name/CIPC/email needed from you here.</p>
+                        <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Tankbridge will contact the Mandate below to confirm they actually have this relationship and complete the real registration. You're credited a share of the commission once they do — no company name/CIPC/email needed from you here.</p>
                         <div className="gnt-grid2">
-                          <div className="gnt-field"><label>Upstream broker's name</label><input value={referralForm.upstreamBrokerName} onChange={e => updateReferralField("upstreamBrokerName", e.target.value)} /></div>
-                          <div className="gnt-field"><label>Upstream broker's email</label><input type="email" value={referralForm.upstreamBrokerEmail} onChange={e => updateReferralField("upstreamBrokerEmail", e.target.value)} placeholder="them@brokerco.co.za" /></div>
+                          <div className="gnt-field"><label>Mandate's name</label><input value={referralForm.upstreamBrokerName} onChange={e => updateReferralField("upstreamBrokerName", e.target.value)} /></div>
+                          <div className="gnt-field"><label>Mandate's email</label><input type="email" value={referralForm.upstreamBrokerEmail} onChange={e => updateReferralField("upstreamBrokerEmail", e.target.value)} placeholder="them@brokerco.co.za" /></div>
                         </div>
-                        <div className="gnt-field"><label>Your share of the 30% broker commission (0–1, e.g. 0.50 = 50%)</label><input type="number" min="0.01" max="0.99" step="0.05" value={referralForm.coBrokerSplitPct} onChange={e => updateReferralField("coBrokerSplitPct", e.target.value)} /></div>
+                        <div className="gnt-field"><label>Your share of the broker commission (rate varies by deal — split with the Mandate)</label>
+                          <div className="gnt-type-toggle" style={{ marginBottom: 10 }}>
+                            <button type="button" className={referralForm.coBrokerShareMode === "percentage" ? "active" : ""} onClick={() => updateReferralField("coBrokerShareMode", "percentage")}>Percentage split</button>
+                            <button type="button" className={referralForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReferralField("coBrokerShareMode", "fixed")}>Fixed amount (R/ℓ)</button>
+                          </div>
+                          {referralForm.coBrokerShareMode === "percentage" ? (
+                            <input type="number" min="0.01" max="0.99" step="0.05" value={referralForm.coBrokerSplitPct} onChange={e => updateReferralField("coBrokerSplitPct", e.target.value)} placeholder="0.50 = 50%" />
+                          ) : (
+                            <>
+                              <input type="number" min="0" step="0.01" value={referralForm.coBrokerFixedAmount} onChange={e => updateReferralField("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 0.05" />
+                              <div className="hint">You're guaranteed this much per litre first; the Mandate gets whatever's left of the commission.</div>
+                            </>
+                          )}
+                        </div>
                       </div>
                     )}
                     <div className="gnt-field"><label>{referralForm.referredType === "seller" ? "Seller" : "Buyer"} company name{!referralForm.hasDirectRelationship && " (best known)"}</label><input value={referralForm.referredCompanyName} onChange={e => updateReferralField("referredCompanyName", e.target.value)} placeholder="Company you're introducing" /></div>
@@ -4004,7 +4051,7 @@ export default function App() {
                           ) : r.is_co_broker_referral ? (
                             <>
                               <span className={`gnt-badge ${r.co_broker_status === "claimed" ? "approved" : r.co_broker_status === "declined" ? "rejected" : "pending"}`}>
-                                {r.co_broker_status === "claimed" ? "Claimed by upstream broker" : r.co_broker_status === "declined" ? "Upstream broker declined" : "Awaiting upstream broker"}
+                                {r.co_broker_status === "claimed" ? "Claimed by Mandate" : r.co_broker_status === "declined" ? "Mandate declined" : "Awaiting Mandate"}
                               </span>
                               <p style={{ fontSize: 10.5, color: "var(--steel-soft)", margin: "4px 0" }}>{r.co_broker_upstream_name} ({r.co_broker_upstream_email})</p>
                               {r.co_broker_status === "pending" && r.co_broker_email_status === "sent" && (
@@ -4065,7 +4112,7 @@ export default function App() {
                           ) : (r.referred_type === "seller" && r.seller_confirm_status !== "approved") ? (
                             <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Not live yet — awaiting seller confirmation</span>
                           ) : (r.is_co_broker_referral && r.co_broker_status !== "claimed") ? (
-                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Not live yet — awaiting upstream broker</span>
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Not live yet — awaiting Mandate</span>
                           ) : r.invite_status !== "accepted" ? (
                             <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Live — no real counterparty registered yet</span>
                           ) : linkDealFor === r.id ? (
