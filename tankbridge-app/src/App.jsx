@@ -644,6 +644,10 @@ export default function App() {
   const [resubmitReferralLicenseFile, setResubmitReferralLicenseFile] = useState(null);
   const [resubmitReferralError, setResubmitReferralError] = useState("");
   const [resubmitReferralBusy, setResubmitReferralBusy] = useState(false);
+  const [editingPendingReferralId, setEditingPendingReferralId] = useState(null);
+  const [editPendingReferralForm, setEditPendingReferralForm] = useState(null);
+  const [editPendingReferralError, setEditPendingReferralError] = useState("");
+  const [editPendingReferralBusy, setEditPendingReferralBusy] = useState(false);
   const [offerActionBusy, setOfferActionBusy] = useState(null);
   const [acceptStep, setAcceptStep] = useState(1);
   const [acceptError, setAcceptError] = useState("");
@@ -1986,6 +1990,46 @@ export default function App() {
     setResubmittingReferralId(null);
     await loadMyReferrals();
     showToast("Referral resubmitted for admin review.");
+  }
+
+  function startEditPendingReferral(referral) {
+    setEditingPendingReferralId(referral.id);
+    setEditPendingReferralForm({
+      unitPrice: String(referral.unit_price || ""),
+      volume: String(referral.volume || ""),
+      location: referral.location || "",
+      terms: referral.terms || [],
+      proposedCommissionRate: String(referral.proposed_commission_rate || "0.10"),
+    });
+    setEditPendingReferralError("");
+  }
+
+  async function submitEditPendingReferral(referral) {
+    const f = editPendingReferralForm;
+    if (!f.unitPrice || !f.volume || !f.location || f.terms.length === 0) {
+      setEditPendingReferralError("Please complete all required fields."); return;
+    }
+    setEditPendingReferralBusy(true);
+    setEditPendingReferralError("");
+    const { error } = await supabase.rpc("edit_pending_seller_referral", {
+      p_referral_id: referral.id,
+      p_unit_price: Number(f.unitPrice),
+      p_volume: Number(f.volume),
+      p_location: f.location,
+      p_terms: f.terms,
+      p_proposed_commission_rate: Number(f.proposedCommissionRate),
+    });
+    if (error) { setEditPendingReferralBusy(false); setEditPendingReferralError(error.message); return; }
+
+    const res = await fetch("/api/send-referral-email", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "confirm", referralId: referral.id }),
+    }).catch(() => null);
+
+    setEditPendingReferralBusy(false);
+    setEditingPendingReferralId(null);
+    await loadMyReferrals();
+    showToast(res && res.ok ? "Corrected — a fresh confirmation email has been sent to the seller." : "Corrected, but the resend email failed — use \"Resend confirmation email\" from Admin.");
   }
 
   async function setReferralStatus(referral, status, reason) {
@@ -3518,7 +3562,36 @@ export default function App() {
                                 : `Awaiting ${r.co_broker_upstream_name} to confirm this relationship`}
                             </div>
                           )}
-                          {r.status === "approved" && !r.is_co_broker_referral && (
+                          {r.status === "approved" && !r.is_co_broker_referral && r.referred_type === "seller" && r.seller_confirm_status !== "approved" && (
+                            <div style={{ marginTop: 6 }}>
+                              <div style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>
+                                {r.seller_confirm_status === "rejected" ? "Seller said this isn't right" : "Awaiting seller confirmation — not live yet"}
+                              </div>
+                              {r.seller_confirm_status === "pending" && resubmittingReferralId !== r.id && editingPendingReferralId !== r.id && (
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 6 }} onClick={() => startEditPendingReferral(r)}>Found a mistake? Edit &amp; resend</button>
+                              )}
+                              {editingPendingReferralId === r.id && editPendingReferralForm && (
+                                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                                  {editPendingReferralError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {editPendingReferralError}</div>}
+                                  <div className="gnt-grid2">
+                                    <div className="gnt-field"><label>Volume (litres)</label><input type="number" min="40000" value={editPendingReferralForm.volume} onChange={e => setEditPendingReferralForm(f => ({ ...f, volume: e.target.value }))} /></div>
+                                    <div className="gnt-field"><label>Asking price (R / litre)</label><input type="number" min="0" step="0.01" value={editPendingReferralForm.unitPrice} onChange={e => setEditPendingReferralForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
+                                  </div>
+                                  <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={editPendingReferralForm.proposedCommissionRate} onChange={e => setEditPendingReferralForm(f => ({ ...f, proposedCommissionRate: e.target.value }))} /></div>
+                                  <div className="gnt-field"><label>Location</label><input value={editPendingReferralForm.location} onChange={e => setEditPendingReferralForm(f => ({ ...f, location: e.target.value }))} /></div>
+                                  <div className="gnt-field"><label>Terms</label>
+                                    <TermsCheckboxGroup value={editPendingReferralForm.terms} onChange={v => setEditPendingReferralForm(f => ({ ...f, terms: v }))} />
+                                  </div>
+                                  <p className="hint" style={{ marginBottom: 8 }}>The confirmation link stays the same and will now show these corrected numbers — resending just makes sure the seller sees them in their inbox too.</p>
+                                  <div style={{ display: "flex", gap: 10 }}>
+                                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={editPendingReferralBusy} onClick={() => submitEditPendingReferral(r)}>{editPendingReferralBusy ? "Sending…" : "Save & resend confirmation"}</button>
+                                    <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setEditingPendingReferralId(null)}>Cancel</button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {r.status === "approved" && !r.is_co_broker_referral && (r.referred_type === "buyer" || r.seller_confirm_status === "approved") && (
                             <div style={{ fontSize: 11.5, color: "var(--steel-soft)", marginTop: 4 }}>
                               {r.invite_status === "accepted"
                                 ? "Registration completed — trading directly now"
