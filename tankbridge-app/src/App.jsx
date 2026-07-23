@@ -3872,6 +3872,30 @@ export default function App() {
                         <td>
                           <span className={`gnt-badge ${r.referred_type === "seller" ? "selling" : "buying"}`}>{r.referred_type}</span>
                           <div style={{ fontWeight: 600, marginTop: 4 }}>{r.referred_company_name}</div>
+                          {(() => {
+                            const dupeReferrals = adminReferrals.filter(other =>
+                              other.id !== r.id &&
+                              other.status !== "rejected" &&
+                              (
+                                (r.referred_cipc && other.referred_cipc && r.referred_cipc.trim().toLowerCase() === other.referred_cipc.trim().toLowerCase()) ||
+                                (r.referred_company_name && other.referred_company_name &&
+                                  r.referred_company_name.trim().toLowerCase() === other.referred_company_name.trim().toLowerCase())
+                              )
+                            );
+                            const dupeCompanies = adminCompanies.filter(c =>
+                              c.company_name && r.referred_company_name &&
+                              c.company_name.trim().toLowerCase() === r.referred_company_name.trim().toLowerCase()
+                            );
+                            if (dupeReferrals.length === 0 && dupeCompanies.length === 0) return null;
+                            return (
+                              <div style={{ fontSize: 11, color: "var(--alert)", marginTop: 4, fontWeight: 600 }}>
+                                ⚠ Possible duplicate —{" "}
+                                {dupeReferrals.length > 0 && `${dupeReferrals.length} other referral${dupeReferrals.length > 1 ? "s" : ""} for a similarly-named company (via ${dupeReferrals.map(d => adminCompanies.find(c => c.id === d.broker_company_id)?.company_name || "another broker").join(", ")})`}
+                                {dupeReferrals.length > 0 && dupeCompanies.length > 0 && " · "}
+                                {dupeCompanies.length > 0 && `already a registered company (${dupeCompanies.map(c => c.status).join(", ")})`}
+                              </div>
+                            );
+                          })()}
                           {(r.referred_contact_name || r.referred_phone || r.referred_email) && (
                             <div style={{ fontSize: 11, color: "var(--steel-soft)" }}>
                               {r.referred_contact_name}{r.referred_phone && ` · ${r.referred_phone}`}{r.referred_email && ` · ${r.referred_email}`}
