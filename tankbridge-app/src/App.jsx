@@ -68,6 +68,7 @@ const EMPTY_REG = {
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "0.10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerSplitPct: "0.50",
+  skipFirstReferral: false,
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed" };
 const EMPTY_REFERRAL = {
@@ -971,6 +972,7 @@ export default function App() {
     }
 
     if (regType === "broker") {
+      if (regForm.skipFirstReferral) return "";
       if (!regForm.hasDirectRelationship) {
         if (!regForm.referredCompanyName) return "Please enter the company's name (best known).";
         if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
@@ -1055,6 +1057,9 @@ export default function App() {
         status: "pending",
       });
       if (listingError) console.error("initial listing insert error", listingError);
+    }
+    if (regType === "broker" && regForm.skipFirstReferral) {
+      return; // No referral submitted at signup — they'll add one later from their Dashboard.
     }
     if (regType === "broker" && !regForm.hasDirectRelationship) {
       const { error: refError } = await supabase.from("referrals").insert({
@@ -2583,6 +2588,14 @@ export default function App() {
                 {regType === "broker" ? (
                   <>
                     <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>Who are you introducing?</h3>
+                    <div className="gnt-type-toggle" style={{ marginBottom: 12 }}>
+                      <button type="button" className={!regForm.skipFirstReferral ? "active" : ""} onClick={() => updateReg("skipFirstReferral", false)}>Submit a referral now</button>
+                      <button type="button" className={regForm.skipFirstReferral ? "active" : ""} onClick={() => updateReg("skipFirstReferral", true)}>Skip — I'll add referrals later</button>
+                    </div>
+                    {regForm.skipFirstReferral ? (
+                      <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>No problem — finish setting up your account below, then use "Add a referral" from your Dashboard whenever you're ready.</p>
+                    ) : (
+                      <>
                     <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>You can add more buyer/seller referrals from your Dashboard later — this is just your first one.</p>
                     {regForm.referredType === "seller" ? (
                       <p style={{ fontSize: 12, color: "var(--steel-soft)", marginBottom: 12 }}><strong>Referring a seller:</strong> you'll need their Wholesale License copy and an asking price (commission included) already agreed with them. They'll get an email to confirm before anything goes live.</p>
@@ -2647,6 +2660,8 @@ export default function App() {
                         <TermsCheckboxGroup value={regForm.tradeTerms} onChange={v => updateReg("tradeTerms", v)} />
                       </div>
                     </div>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
