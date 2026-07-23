@@ -3949,6 +3949,15 @@ export default function App() {
                                 {r.co_broker_status === "claimed" ? "Claimed by upstream broker" : r.co_broker_status === "declined" ? "Upstream broker declined" : "Awaiting upstream broker"}
                               </span>
                               <p style={{ fontSize: 10.5, color: "var(--steel-soft)", margin: "4px 0" }}>{r.co_broker_upstream_name} ({r.co_broker_upstream_email})</p>
+                              {r.co_broker_status === "pending" && r.co_broker_email_status === "sent" && (
+                                <p style={{ fontSize: 10.5, color: "var(--verified)", margin: "4px 0" }}>✓ Email sent to {r.co_broker_upstream_email} on {fmtDate(r.co_broker_email_sent_at)}</p>
+                              )}
+                              {r.co_broker_status === "pending" && r.co_broker_email_status === "failed" && (
+                                <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>✗ Email failed to send ({fmtDate(r.co_broker_email_sent_at)}) — {r.co_broker_email_error}</p>
+                              )}
+                              {r.co_broker_status === "pending" && !r.co_broker_email_status && (
+                                <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>No confirmation email sent yet.</p>
+                              )}
                               {r.co_broker_status === "declined" && r.co_broker_decline_reason && (
                                 <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>Reason: {r.co_broker_decline_reason}</p>
                               )}
@@ -3965,6 +3974,15 @@ export default function App() {
                                 <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>Reason: {r.seller_confirm_reason}</p>
                               )}
                               <p style={{ fontSize: 10.5, color: "var(--steel-soft)", margin: "4px 0" }}>Not on the Market Board yet — seller must approve the price and commission first.</p>
+                              {r.seller_confirm_email_status === "sent" && (
+                                <p style={{ fontSize: 10.5, color: "var(--verified)", margin: "4px 0" }}>✓ Email sent to {r.referred_email} on {fmtDate(r.seller_confirm_email_sent_at)}</p>
+                              )}
+                              {r.seller_confirm_email_status === "failed" && (
+                                <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>✗ Email failed to send ({fmtDate(r.seller_confirm_email_sent_at)}) — {r.seller_confirm_email_error}</p>
+                              )}
+                              {!r.seller_confirm_email_status && (
+                                <p style={{ fontSize: 10.5, color: "var(--alert)", margin: "4px 0" }}>No confirmation email sent yet.</p>
+                              )}
                               {r.seller_confirm_status !== "rejected" && (
                                 <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => resendReferralConfirm(r)}>Resend confirmation email</button>
                               )}
