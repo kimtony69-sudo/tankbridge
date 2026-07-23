@@ -639,6 +639,11 @@ export default function App() {
   const [offerCommissionInputs, setOfferCommissionInputs] = useState({});
   const [referralRejectingId, setReferralRejectingId] = useState(null);
   const [referralRejectReasonInput, setReferralRejectReasonInput] = useState("");
+  const [resubmittingReferralId, setResubmittingReferralId] = useState(null);
+  const [resubmitReferralForm, setResubmitReferralForm] = useState(null);
+  const [resubmitReferralLicenseFile, setResubmitReferralLicenseFile] = useState(null);
+  const [resubmitReferralError, setResubmitReferralError] = useState("");
+  const [resubmitReferralBusy, setResubmitReferralBusy] = useState(false);
   const [offerActionBusy, setOfferActionBusy] = useState(null);
   const [acceptStep, setAcceptStep] = useState(1);
   const [acceptError, setAcceptError] = useState("");
@@ -1930,8 +1935,61 @@ export default function App() {
     showToast("Referral linked to the deal — commission has been calculated.");
   }
 
+  function startResubmitReferral(referral) {
+    setResubmittingReferralId(referral.id);
+    setResubmitReferralForm({
+      referredCompanyName: referral.referred_company_name || "",
+      referredCipc: referral.referred_cipc || "",
+      referredEmail: referral.referred_email || "",
+      unitPrice: String(referral.unit_price || ""),
+      volume: String(referral.volume || ""),
+      location: referral.location || "",
+      terms: referral.terms || [],
+      proposedCommissionRate: String(referral.proposed_commission_rate || "0.10"),
+    });
+    setResubmitReferralError("");
+    setResubmitReferralLicenseFile(null);
+  }
+
+  async function submitResubmitReferral(referral) {
+    const f = resubmitReferralForm;
+    if (!f.referredCompanyName || !f.unitPrice || !f.volume || !f.location || f.terms.length === 0) {
+      setResubmitReferralError("Please complete all required fields."); return;
+    }
+    setResubmitReferralBusy(true);
+    setResubmitReferralError("");
+    const { error } = await supabase.rpc("resubmit_referral", {
+      p_referral_id: referral.id,
+      p_referred_company_name: f.referredCompanyName,
+      p_referred_cipc: f.referredCipc || null,
+      p_referred_email: f.referredEmail || null,
+      p_unit_price: Number(f.unitPrice),
+      p_volume: Number(f.volume),
+      p_location: f.location,
+      p_terms: f.terms,
+      p_proposed_commission_rate: referral.referred_type === "seller" ? Number(f.proposedCommissionRate) : null,
+    });
+    if (error) { setResubmitReferralBusy(false); setResubmitReferralError(error.message); return; }
+
+    if (referral.referred_type === "seller" && resubmitReferralLicenseFile) {
+      const path = `${session.user.id}/referral_wholesale_license/${referral.id}-${Date.now()}-${resubmitReferralLicenseFile.name}`;
+      const { error: upErr } = await supabase.storage.from("company-docs").upload(path, resubmitReferralLicenseFile);
+      if (!upErr) await supabase.from("referrals").update({ wholesale_license_path: path }).eq("id", referral.id);
+    }
+
+    fetch("/api/send-referral-email", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "admin_new_referral", referralId: referral.id }),
+    }).catch(() => {});
+
+    setResubmitReferralBusy(false);
+    setResubmittingReferralId(null);
+    await loadMyReferrals();
+    showToast("Referral resubmitted for admin review.");
+  }
+
   async function setReferralStatus(referral, status, reason) {
-    const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
+    const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status, p_reason: reason || null });
     if (error) { showToast(error.message, "err"); return; }
     if (status === "approved" && referral.is_co_broker_referral) {
       const res = await fetch("/api/send-referral-email", {
@@ -3467,12 +3525,51 @@ export default function App() {
                                 : "Live on the Market Board — they'll be asked to confirm and complete registration once a real counterparty accepts"}
                             </div>
                           )}
+                          {r.status === "rejected" && (
+                            <div style={{ marginTop: 6 }}>
+                              {r.rejection_reason && <p style={{ fontSize: 12, color: "var(--alert)" }}>Reason: {r.rejection_reason}</p>}
+                              {resubmittingReferralId !== r.id && (
+                                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => startResubmitReferral(r)}>Fix &amp; resubmit</button>
+                              )}
+                            </div>
+                          )}
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div className="gnt-badge pending">{r.commission_status}</div>
                           {r.commission_amount != null && <div style={{ marginTop: 6, fontWeight: 600 }}>{fmtMoney(r.commission_amount)}</div>}
                         </div>
                       </div>
+                      {resubmittingReferralId === r.id && resubmitReferralForm && (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                          {resubmitReferralError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {resubmitReferralError}</div>}
+                          <div className="gnt-field"><label>{r.referred_type === "seller" ? "Seller" : "Buyer"} company name</label><input value={resubmitReferralForm.referredCompanyName} onChange={e => setResubmitReferralForm(f => ({ ...f, referredCompanyName: e.target.value }))} /></div>
+                          {r.referred_type === "buyer" && (
+                            <div className="gnt-field"><label>CIPC registration number</label><input className="mono" value={resubmitReferralForm.referredCipc} onChange={e => setResubmitReferralForm(f => ({ ...f, referredCipc: e.target.value }))} /></div>
+                          )}
+                          {r.referred_type === "seller" && (
+                            <div className="gnt-field">
+                              <label>Re-upload Wholesale License copy (optional — only if it changed)</label>
+                              <FileInput onChange={e => setResubmitReferralLicenseFile(e.target.files?.[0] || null)} />
+                            </div>
+                          )}
+                          <div className="gnt-field"><label>Their email</label><input type="email" value={resubmitReferralForm.referredEmail} onChange={e => setResubmitReferralForm(f => ({ ...f, referredEmail: e.target.value }))} /></div>
+                          <div className="gnt-grid2">
+                            <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" value={resubmitReferralForm.volume} onChange={e => setResubmitReferralForm(f => ({ ...f, volume: e.target.value }))} /></div>
+                            <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={resubmitReferralForm.unitPrice} onChange={e => setResubmitReferralForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
+                          </div>
+                          {r.referred_type === "seller" && (
+                            <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={resubmitReferralForm.proposedCommissionRate} onChange={e => setResubmitReferralForm(f => ({ ...f, proposedCommissionRate: e.target.value }))} /></div>
+                          )}
+                          <div className="gnt-field"><label>Location</label><input value={resubmitReferralForm.location} onChange={e => setResubmitReferralForm(f => ({ ...f, location: e.target.value }))} /></div>
+                          <div className="gnt-field"><label>Terms</label>
+                            <TermsCheckboxGroup value={resubmitReferralForm.terms} onChange={v => setResubmitReferralForm(f => ({ ...f, terms: v }))} />
+                          </div>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={resubmitReferralBusy} onClick={() => submitResubmitReferral(r)}>{resubmitReferralBusy ? "Submitting…" : "Resubmit for review"}</button>
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setResubmittingReferralId(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
                       {r.status === "approved" && r.invite_status !== "accepted" && r.listing_id && (
                         <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
                           {editingBrokerListingId === r.listing_id ? (
@@ -3798,6 +3895,9 @@ export default function App() {
                         <td>{r.product}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{Number(r.volume).toLocaleString()} ℓ @ {fmtMoney(r.unit_price)} · {fmtTerms(r.terms)} · {r.location}</span></td>
                         <td>
                           <span className={`gnt-badge ${r.status}`}>{r.status}</span>
+                          {r.status === "rejected" && r.rejection_reason && (
+                            <p style={{ fontSize: 10.5, color: "var(--steel-soft)", marginTop: 4 }}>Reason: {r.rejection_reason}</p>
+                          )}
                           {r.status === "pending" && (
                             referralRejectingId === r.id ? (
                               <div style={{ marginTop: 8, minWidth: 200 }}>
