@@ -2783,7 +2783,10 @@ export default function App() {
                 {regType === "broker" && (
                   <>
                     <h4>6. Referral commission</h4>
-                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration), Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete. Broker confirms the CIPC/DMRE details submitted for the referred party are accurate to the best of its knowledge.</p>
+                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration) within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete.</p>
+                    <p><strong>Ordinary referral</strong> (Broker does not actively negotiate price or commission on the referred party's behalf): Broker receives 30% of Tankbridge's brokerage fee on the matched deal.</p>
+                    <p><strong>Represented negotiation</strong> (Broker acts as the referred party's representative/mandate and actively negotiates price and commission via the Market Board): Tankbridge's platform share is capped at 40% of the negotiated commission; Broker receives the remainder — split evenly with the other side's representative if they also negotiate actively, or reduced by 10% if the other side has its own separate, uninvolved referring party.</p>
+                    <p>For a referred seller, the Wholesale License copy submitted is used by admin to verify CIPC and DMRE; for a referred buyer, the CIPC number submitted is confirmed accurate to the best of Broker's knowledge.</p>
                   </>
                 )}
 
@@ -3307,9 +3310,12 @@ export default function App() {
                 </>
               )}
 
-              {myCompany.status === "approved" && (
+              {(myCompany.status === "approved" || myCompany.status === "pending") && (
                 <>
                   <h3 style={{ fontSize: 22, marginBottom: 4 }}>{myCompany.type === "broker" ? "Add a referral" : "Refer another company"}</h3>
+                  {myCompany.status === "pending" && (
+                    <div className="gnt-alert-banner" style={{ marginBottom: 12 }}><AlertTriangle size={16} /> Your own registration is still awaiting approval — you can still submit referrals in the meantime, they're reviewed independently.</div>
+                  )}
                   <div className="gnt-card" style={{ marginBottom: 16, fontSize: 12.5, color: "var(--steel-soft)" }}>
                     <strong style={{ display: "block", color: "var(--ink)", marginBottom: 4 }}>What Tankbridge does</strong>
                     Tankbridge is a verified B2B marketplace for bulk diesel. CIPC/DMRE-checked buyers and sellers trade directly, anonymously until both sides agree — Tankbridge never buys, sells, or holds funds itself, just verifies and connects.
@@ -3395,7 +3401,10 @@ export default function App() {
 
                     <div className="gnt-doc-box" style={{ maxHeight: 200 }}>
                       <h4>Referral Agreement</h4>
-                      <p>By submitting this referral, {myCompany.company_name} ("Broker") confirms it is introducing the above party to Tankbridge in good faith, and that the CIPC/DMRE details provided are accurate to the best of Broker's knowledge. If Tankbridge concludes a deal involving this referral, Broker will be paid a commission equal to <strong>30% of the brokerage fee actually received by Tankbridge</strong> on that deal, once admin has linked the referral to the matched deal and recorded the fee. No commission is payable on deals that do not complete.</p>
+                      <p>By submitting this referral, {myCompany.company_name} ("Introducer") confirms it is introducing the above party to Tankbridge in good faith. For a seller, the Wholesale License copy provided is used by admin to verify the CIPC and DMRE details; for a buyer, the CIPC number provided is confirmed accurate to the best of Introducer's knowledge.</p>
+                      <p>If Tankbridge concludes a deal involving this referral within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete.</p>
+                      <p><strong>Ordinary referral</strong> (Introducer does not actively negotiate price or commission on the referred party's behalf): Introducer receives 30% of Tankbridge's brokerage fee on the matched deal.</p>
+                      <p><strong>Represented negotiation</strong> (Introducer acts as the referred party's representative/mandate and actively negotiates price and commission via the Market Board): Tankbridge's platform share is capped at 40% of the negotiated commission; Introducer receives the remainder — split evenly with the other side's representative if they also negotiate actively, or reduced by 10% if the other side has its own separate, uninvolved referring party.</p>
                     </div>
                     <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
                       <input type="checkbox" checked={referralAgree} onChange={e => setReferralAgree(e.target.checked)} style={{ marginTop: 3 }} />
