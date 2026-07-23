@@ -7,7 +7,7 @@ import {
 import { supabase } from "./supabaseClient";
 
 
-const PRODUCTS = ["Diesel 50ppm", "Diesel 10ppm (ULSD)", "Illuminating Paraffin", "Petrol ULP93", "Petrol ULP95"];
+const PRODUCTS = ["Diesel 50ppm", "Diesel 10ppm (ULSD)", "Illuminating Paraffin", "Petrol ULP93", "Petrol ULP95", "Slop", "HFO"];
 const LOCATIONS = ["Durban", "Lesedi", "Secunda", "Sasolburg", "Johannesburg", "Cape Town", "Richards Bay", "Other"];
 const OWNERSHIP_LABELS = {
   title_holder: "Title Holder · POP",
@@ -4075,8 +4075,14 @@ export default function App() {
                         <td>
                           {r.matched_deal_id ? (
                             <span className="mono" style={{ fontSize: 11.5 }}>{r.matched_deal_id.slice(0, 8)}…</span>
+                          ) : r.status !== "approved" ? (
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>—</span>
+                          ) : (r.referred_type === "seller" && r.seller_confirm_status !== "approved") ? (
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Not live yet — awaiting seller confirmation</span>
+                          ) : (r.is_co_broker_referral && r.co_broker_status !== "claimed") ? (
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Not live yet — awaiting upstream broker</span>
                           ) : r.invite_status !== "accepted" ? (
-                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Awaiting invite acceptance</span>
+                            <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>Live — no real counterparty registered yet</span>
                           ) : linkDealFor === r.id ? (
                             <div style={{ display: "flex", gap: 6 }}>
                               <select value={linkDealChoice} onChange={e => setLinkDealChoice(e.target.value)} style={{ padding: "6px 8px" }}>
