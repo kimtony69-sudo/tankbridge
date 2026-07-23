@@ -635,6 +635,7 @@ export default function App() {
   const [offerSubmitting, setOfferSubmitting] = useState(false);
   const [myOffers, setMyOffers] = useState([]);
   const [offerCounterInputs, setOfferCounterInputs] = useState({});
+  const [offerCommissionInputs, setOfferCommissionInputs] = useState({});
   const [offerActionBusy, setOfferActionBusy] = useState(null);
   const [acceptStep, setAcceptStep] = useState(1);
   const [acceptError, setAcceptError] = useState("");
@@ -908,9 +909,13 @@ export default function App() {
   }, [myCompany]);
 
   const loadMyOffers = useCallback(async () => {
-    if (!myCompany || myCompany.type === "broker") return;
+    if (!myCompany) return;
+    const { data: represented } = await supabase.from("companies").select("id")
+      .eq("referred_by_broker_id", myCompany.id).is("user_id", null);
+    const ids = [myCompany.id, ...(represented || []).map(c => c.id)];
+    const orClause = ids.map(id => `buyer_company_id.eq.${id},seller_company_id.eq.${id}`).join(",");
     const { data } = await supabase.from("offers").select("*, listings(product, volume, location, terms, procedures)")
-      .or(`buyer_company_id.eq.${myCompany.id},seller_company_id.eq.${myCompany.id}`)
+      .or(orClause)
       .order("updated_at", { ascending: false });
     setMyOffers(data || []);
   }, [myCompany]);
@@ -1587,9 +1592,85 @@ export default function App() {
     showToast("Offer submitted — the buyer has been emailed and can accept or counter.");
   }
 
-  async function respondToOffer(offerId, action, priceValue) {
+  function renderMyNegotiations() {
+    const open = myOffers.filter(o => o.status === "open");
+    if (open.length === 0) return null;
+    return (
+      <>
+        <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My negotiations</h3>
+        {open.map(o => {
+          const isBuyerSide = myCompany.id === o.buyer_company_id || myCompany.id === o.buyer_negotiator_id;
+          const isDelegate = myCompany.id !== o.buyer_company_id && myCompany.id !== o.seller_company_id;
+          const myTurn = (isBuyerSide && o.current_turn === "buyer") || (!isBuyerSide && o.current_turn === "seller");
+          const myRound = isBuyerSide ? o.buyer_round : o.seller_round;
+          const counterKey = o.id;
+          return (
+            <div key={o.id} className="gnt-card" style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <span className="gnt-badge pending">{myTurn ? "Your turn" : "Waiting on other party"}</span>
+                  <div style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{o.listings?.product} · {Number(o.listings?.volume || 0).toLocaleString()} ℓ · {fmtTerms(o.listings?.terms)} · {o.listings?.location}</div>
+                  <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 2 }}>{isDelegate ? `Negotiating on behalf of the ${isBuyerSide ? "buyer" : "seller"}` : `You are the ${isBuyerSide ? "buyer" : "seller"}`} · rounds used: {myRound}/2</div>
+                </div>
+                <div className="mono" style={{ fontWeight: 600 }}>{fmtMoney(o.current_price)}/ℓ</div>
+              </div>
+              {o.current_commission_rate != null && (
+                <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 6 }}>Commission on the table: <strong className="mono">{fmtMoney(o.current_commission_rate)}/ℓ</strong></div>
+              )}
+              {myTurn && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={offerActionBusy === o.id + "accept"} onClick={() => respondToOffer(o.id, "accept")}>
+                      {offerActionBusy === o.id + "accept" ? "Accepting…" : "Accept"}
+                    </button>
+                    {myRound < 2 && (
+                      <>
+                        <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 120 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                        <input type="number" min="0" step="0.01" placeholder="Commission (optional)" style={{ width: 150 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                        <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey])}>
+                          {offerActionBusy === o.id + "counter" ? "Sending…" : "Counter"}
+                        </button>
+                      </>
+                    )}
+                    <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={offerActionBusy === o.id + "decline"} onClick={() => respondToOffer(o.id, "decline")}>
+                      {offerActionBusy === o.id + "decline" ? "Declining…" : "Decline"}
+                    </button>
+                  </div>
+                  {isDelegate && offerCommissionInputs[counterKey] && Number(offerCommissionInputs[counterKey]) > 0 && (() => {
+                    const rate = Number(offerCommissionInputs[counterKey]);
+                    const vol = Number(o.listings?.volume || 0);
+                    const total = rate * vol;
+                    const otherActive = isBuyerSide ? !!o.seller_negotiator_id : !!o.buyer_negotiator_id;
+                    const bothActiveShare = total * 0.30;
+                    const soloHighShare = total * 0.60;
+                    const soloLowShare = total * 0.50;
+                    return (
+                      <p className="hint" style={{ marginTop: 8 }}>
+                        Estimated split on this commission (platform always takes 40% first): {
+                          otherActive
+                            ? <>you and the other party's representative split the rest evenly — roughly <strong>{fmtMoney(bothActiveShare)}/ℓ each</strong>.</>
+                            : <>your estimated share is roughly <strong>{fmtMoney(soloLowShare)}/ℓ to {fmtMoney(soloHighShare)}/ℓ</strong>, depending on whether the other side has its own referring broker.</>
+                        }
+                      </p>
+                    );
+                  })()}
+                  {myRound >= 2 && <p className="hint" style={{ marginTop: 6 }}>You've used both your counter-offers — accept or decline to close this out.</p>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
+  async function respondToOffer(offerId, action, priceValue, commissionValue) {
     setOfferActionBusy(offerId + action);
-    const { data, error } = await supabase.rpc("respond_to_offer", { p_offer_id: offerId, p_action: action, p_price: priceValue ? Number(priceValue) : null });
+    const { data, error } = await supabase.rpc("respond_to_offer", {
+      p_offer_id: offerId, p_action: action,
+      p_price: priceValue ? Number(priceValue) : null,
+      p_commission_rate: commissionValue ? Number(commissionValue) : null,
+    });
     setOfferActionBusy(null);
     if (error) { showToast(error.message, "err"); return; }
     if (action !== "decline") {
@@ -2502,7 +2583,12 @@ export default function App() {
                 {regType === "broker" ? (
                   <>
                     <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>Who are you introducing?</h3>
-                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>You can add more buyer/seller referrals from your Dashboard later — this is just your first one.</p>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>You can add more buyer/seller referrals from your Dashboard later — this is just your first one.</p>
+                    {regForm.referredType === "seller" ? (
+                      <p style={{ fontSize: 12, color: "var(--steel-soft)", marginBottom: 12 }}><strong>Referring a seller:</strong> you'll need their Wholesale License copy and an asking price (commission included) already agreed with them. They'll get an email to confirm before anything goes live.</p>
+                    ) : (
+                      <p style={{ fontSize: 12, color: "var(--steel-soft)", marginBottom: 12 }}><strong>Referring a buyer:</strong> you'll need their CIPC number and requirement details. No price disclosure needed if they'd rather review seller offers than name a bid.</p>
+                    )}
                     <div className="gnt-type-toggle">
                       <button type="button" className={regForm.referredType === "seller" ? "active" : ""} onClick={() => updateReg("referredType", "seller")}>Referring a Seller</button>
                       <button type="button" className={regForm.referredType === "buyer" ? "active" : ""} onClick={() => updateReg("referredType", "buyer")}>Referring a Buyer</button>
@@ -3127,50 +3213,7 @@ export default function App() {
                     )
                   ))}
 
-                  {myOffers.filter(o => o.status === "open").length > 0 && (
-                    <>
-                      <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My negotiations</h3>
-                      {myOffers.filter(o => o.status === "open").map(o => {
-                        const isBuyerSide = myCompany.id === o.buyer_company_id;
-                        const myTurn = (isBuyerSide && o.current_turn === "buyer") || (!isBuyerSide && o.current_turn === "seller");
-                        const myRound = isBuyerSide ? o.buyer_round : o.seller_round;
-                        const counterKey = o.id;
-                        return (
-                          <div key={o.id} className="gnt-card" style={{ marginBottom: 10 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                              <div>
-                                <span className="gnt-badge pending">{myTurn ? "Your turn" : "Waiting on other party"}</span>
-                                <div style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{o.listings?.product} · {Number(o.listings?.volume || 0).toLocaleString()} ℓ · {fmtTerms(o.listings?.terms)} · {o.listings?.location}</div>
-                                <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 2 }}>You are the {isBuyerSide ? "buyer" : "seller"} · rounds used: {myRound}/2</div>
-                              </div>
-                              <div className="mono" style={{ fontWeight: 600 }}>{fmtMoney(o.current_price)}/ℓ</div>
-                            </div>
-                            {myTurn && (
-                              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                  <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={offerActionBusy === o.id + "accept"} onClick={() => respondToOffer(o.id, "accept")}>
-                                    {offerActionBusy === o.id + "accept" ? "Accepting…" : "Accept"}
-                                  </button>
-                                  {myRound < 2 && (
-                                    <>
-                                      <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 130 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
-                                      <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey])}>
-                                        {offerActionBusy === o.id + "counter" ? "Sending…" : "Counter"}
-                                      </button>
-                                    </>
-                                  )}
-                                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={offerActionBusy === o.id + "decline"} onClick={() => respondToOffer(o.id, "decline")}>
-                                    {offerActionBusy === o.id + "decline" ? "Declining…" : "Decline"}
-                                  </button>
-                                </div>
-                                {myRound >= 2 && <p className="hint" style={{ marginTop: 6 }}>You've used both your counter-offers — accept or decline to close this out.</p>}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </>
-                  )}
+                  {renderMyNegotiations()}
 
                   <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My matched deals</h3>
                   {myCompany.type === "seller" && imfpaJustSigned && myCompany.imfpa_signed && (
@@ -3249,10 +3292,19 @@ export default function App() {
                 </>
               )}
 
-              {myCompany.status === "approved" && myCompany.type === "broker" && (
+              {myCompany.status === "approved" && (
                 <>
-                  <h3 style={{ fontSize: 22, marginBottom: 4 }}>Add a referral</h3>
-                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Register a buyer or seller you represent — submit as many as you like, for either side. Admin verifies CIPC (and DMRE for sellers) before it goes live on the Market Board. Commission is 30% of Tankbridge's brokerage fee on any matched deal, payable once admin links your referral to that deal.</p>
+                  <h3 style={{ fontSize: 22, marginBottom: 4 }}>{myCompany.type === "broker" ? "Add a referral" : "Refer another company"}</h3>
+                  <div className="gnt-card" style={{ marginBottom: 16, fontSize: 12.5, color: "var(--steel-soft)" }}>
+                    <strong style={{ display: "block", color: "var(--ink)", marginBottom: 4 }}>What Tankbridge does</strong>
+                    Tankbridge is a verified B2B marketplace for bulk diesel. CIPC/DMRE-checked buyers and sellers trade directly, anonymously until both sides agree — Tankbridge never buys, sells, or holds funds itself, just verifies and connects.
+                  </div>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>Register a buyer or seller you represent — submit as many as you like, for either side. Admin verifies CIPC (and DMRE for sellers) before it goes live on the Market Board. Commission is 30% of Tankbridge's brokerage fee on any matched deal, payable once admin links your referral to that deal.</p>
+                  {referralForm.referredType === "seller" ? (
+                    <p style={{ fontSize: 12, color: "var(--steel-soft)", marginBottom: 14 }}><strong>Referring a seller:</strong> you'll need their Wholesale License copy and an asking price (commission included) already agreed with them. They'll get an email to confirm before anything goes live, and complete their own quick registration once a real buyer shows interest.</p>
+                  ) : (
+                    <p style={{ fontSize: 12, color: "var(--steel-soft)", marginBottom: 14 }}><strong>Referring a buyer:</strong> you'll need their CIPC number, budget, and requirement details. Their listing goes live once admin approves — no price disclosure needed if they'd rather review seller offers instead of naming a bid.</p>
+                  )}
                   {referralError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {referralError}</div>}
                   <form onSubmit={submitReferral} className="gnt-card" style={{ marginBottom: 30 }}>
                     <div className="gnt-type-toggle">
@@ -3399,6 +3451,8 @@ export default function App() {
                       )}
                     </div>
                   ))}
+
+                  {renderMyNegotiations()}
 
                   <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My commissions</h3>
                   <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Automatically tracked for any deal completed by a company you referred, within 24 months of their registration — no manual linking needed.</p>
