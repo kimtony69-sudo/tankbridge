@@ -637,6 +637,8 @@ export default function App() {
   const [myOffers, setMyOffers] = useState([]);
   const [offerCounterInputs, setOfferCounterInputs] = useState({});
   const [offerCommissionInputs, setOfferCommissionInputs] = useState({});
+  const [referralRejectingId, setReferralRejectingId] = useState(null);
+  const [referralRejectReasonInput, setReferralRejectReasonInput] = useState("");
   const [offerActionBusy, setOfferActionBusy] = useState(null);
   const [acceptStep, setAcceptStep] = useState(1);
   const [acceptError, setAcceptError] = useState("");
@@ -1062,7 +1064,7 @@ export default function App() {
       return; // No referral submitted at signup — they'll add one later from their Dashboard.
     }
     if (regType === "broker" && !regForm.hasDirectRelationship) {
-      const { error: refError } = await supabase.from("referrals").insert({
+      const { data: refData, error: refError } = await supabase.from("referrals").insert({
         broker_company_id: companyId,
         referred_type: regForm.referredType,
         referred_company_name: regForm.referredCompanyName,
@@ -1078,8 +1080,12 @@ export default function App() {
         agreement_accepted: true,
         agreement_accepted_by: ncndaName,
         agreement_accepted_at: new Date().toISOString(),
-      });
+      }).select().single();
       if (refError) console.error("co-broker referral insert error", refError);
+      else fetch("/api/send-referral-email", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "admin_new_referral", referralId: refData.id }),
+      }).catch(() => {});
       return;
     }
     if (regType === "broker") {
@@ -1101,6 +1107,12 @@ export default function App() {
         agreement_accepted_at: new Date().toISOString(),
       }).select().single();
       if (refError) console.error("referral insert error", refError);
+      if (!refError) {
+        fetch("/api/send-referral-email", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "admin_new_referral", referralId: refData.id }),
+        }).catch(() => {});
+      }
       if (!refError && regForm.referredType === "seller" && regReferralLicenseFile) {
         const path = `${session.user.id}/referral_wholesale_license/${refData.id}-${regReferralLicenseFile.name}`;
         const { error: upErr } = await supabase.storage.from("company-docs").upload(path, regReferralLicenseFile);
@@ -1499,7 +1511,7 @@ export default function App() {
     const resolvedLocation = f.location === "Other" ? f.locationOther.trim() : f.location;
 
     if (!f.hasDirectRelationship) {
-      const { error } = await supabase.from("referrals").insert({
+      const { data, error } = await supabase.from("referrals").insert({
         broker_company_id: myCompany.id,
         referred_type: f.referredType,
         referred_company_name: f.referredCompanyName,
@@ -1516,13 +1528,17 @@ export default function App() {
         agreement_accepted: true,
         agreement_accepted_by: referralName,
         agreement_accepted_at: new Date().toISOString(),
-      });
+      }).select().single();
       setReferralConfirmOpen(false);
       if (error) { setReferralError(error.message); return; }
       setReferralForm(EMPTY_REFERRAL);
       setReferralAgree(false);
       setReferralName("");
       await loadMyReferrals();
+      fetch("/api/send-referral-email", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "admin_new_referral", referralId: data.id }),
+      }).catch(() => {});
       showToast("Handoff request submitted — admin will verify, then contact the upstream broker to confirm.");
       return;
     }
@@ -1565,6 +1581,10 @@ export default function App() {
     setReferralAgree(false);
     setReferralName("");
     await loadMyReferrals();
+    fetch("/api/send-referral-email", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "admin_new_referral", referralId: data.id }),
+    }).catch(() => {});
     showToast("Referral submitted for admin verification — it will appear on the Market Board once approved.");
   }
 
@@ -1910,7 +1930,7 @@ export default function App() {
     showToast("Referral linked to the deal — commission has been calculated.");
   }
 
-  async function setReferralStatus(referral, status) {
+  async function setReferralStatus(referral, status, reason) {
     const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status });
     if (error) { showToast(error.message, "err"); return; }
     if (status === "approved" && referral.is_co_broker_referral) {
@@ -1934,7 +1954,14 @@ export default function App() {
     } else if (status === "approved") {
       showToast(`Verified — ${referral.referred_company_name}'s listing is now live on the Market Board. They'll be asked to complete registration once a real counterparty accepts it.`);
     } else {
-      showToast("Referral rejected.");
+      fetch("/api/send-referral-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "rejected", referralId: referral.id, reason: reason || null }),
+      }).catch(() => {});
+      setReferralRejectingId(null);
+      setReferralRejectReasonInput("");
+      showToast("Referral rejected — the submitting broker/mandate has been notified. The referred party was never contacted.");
     }
     await loadAdminData();
     await loadMarketBoard();
@@ -3772,10 +3799,21 @@ export default function App() {
                         <td>
                           <span className={`gnt-badge ${r.status}`}>{r.status}</span>
                           {r.status === "pending" && (
-                            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
-                              <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setReferralStatus(r, "rejected")}>Reject</button>
-                            </div>
+                            referralRejectingId === r.id ? (
+                              <div style={{ marginTop: 8, minWidth: 200 }}>
+                                <textarea rows={2} placeholder="Reason (optional)" style={{ fontSize: 12, marginBottom: 6, width: "100%" }}
+                                  value={referralRejectReasonInput} onChange={e => setReferralRejectReasonInput(e.target.value)} />
+                                <div style={{ display: "flex", gap: 6 }}>
+                                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => setReferralStatus(r, "rejected", referralRejectReasonInput)}>Confirm reject</button>
+                                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setReferralRejectingId(null); setReferralRejectReasonInput(""); }}>Cancel</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => setReferralStatus(r, "approved")}>Verify &amp; Approve</button>
+                                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { setReferralRejectingId(r.id); setReferralRejectReasonInput(""); }}>Reject</button>
+                              </div>
+                            )
                           )}
                         </td>
                         <td style={{ fontSize: 11.5 }}>
