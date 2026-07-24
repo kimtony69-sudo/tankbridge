@@ -61,12 +61,12 @@ export default async function handler(req, res) {
       if (!broker || !broker.email || broker.email === "-") continue;
 
       const amountLine = c.commission_amount != null
-        ? `<p><strong>Your commission (30%):</strong> R ${Number(c.commission_amount).toFixed(2)} — payment status: ${c.commission_status}</p>`
-        : `<p>Your 30% commission will be calculated once Tankbridge admin records the platform fee for this deal.</p>`;
+        ? `<p><strong>Your commission:</strong> R ${Number(c.commission_amount).toFixed(2)} — settlement status: ${c.commission_status}</p>`
+        : `<p>Your commission will be calculated once Tankbridge admin records the platform fee for this deal.</p>`;
 
       const ok = await sendResendEmail({
         to: broker.email,
-        subject: `Deal completed — commission ${c.commission_amount != null ? "pending payment" : "to be calculated"}`,
+        subject: `Deal completed — commission ${c.commission_amount != null ? "pending settlement" : "to be calculated"}`,
         html: `
           <h2>A deal you referred has been completed</h2>
           <p><strong>Product:</strong> ${deal.product}</p>
@@ -74,7 +74,7 @@ export default async function handler(req, res) {
           <p><strong>Terms:</strong> ${fmtTerms(deal.terms)}</p>
           <p><strong>Your role:</strong> ${c.role === "seller_side" ? "Seller-side referral" : "Buyer-side referral"}</p>
           ${amountLine}
-          <p style="font-size:12px;color:#888;margin-top:16px;">Commission is calculated automatically for deals completed within 24 months of a referred company's registration. Payment is arranged directly with Tankbridge admin — this is not an automatic bank transfer.</p>
+          <p style="font-size:12px;color:#888;margin-top:16px;">Commission is calculated automatically for this deal and, if the same buyer-seller pair trades again, for future deals between them too (within 24 months of their first deal). Settlement is handled by an independent third-party escrow, which pays each party directly and simultaneously per the recorded split — Tankbridge and the deal's other broker never hold or pass through your funds.</p>
         `,
       });
       if (ok) sent++;
