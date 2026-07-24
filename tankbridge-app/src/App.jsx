@@ -2620,7 +2620,7 @@ export default function App() {
               <div>
                 <div className="gnt-eyebrow">Verified Bulk Fuel Trading</div>
                 <h1>Zero friction.<br /><span>Verified before it's visible.</span></h1>
-                <p className="lead">South Africa's bulk diesel market runs on ghost volumes, unverified allocations and unregulated brokers. Tankbridge is the compliance layer — CIPC- and DMRE-verified counterparties trading 40,000ℓ+ lots under COC, COD, ITT or TTO terms, with transparent pricing and fixed, disclosed commission. Proof of Product and Proof of Funds stay exactly where they belong: between you and your counterparty.</p>
+                <p className="lead">South Africa's bulk diesel market runs on ghost volumes, unverified allocations, and unscreened middlemen. Tankbridge is the compliance layer — connecting CIPC- and DMRE-verified counterparties trading 40,000ℓ+ lots under COC, COD, ITT, or TTO terms. Pricing stays transparent, with commission structures pre-agreed and protected. Proof of Product and Proof of Funds stay exactly where they belong: securely between you and your verified counterparty.</p>
                 <div className="gnt-hero-ctas">
                   <button className="gnt-btn gnt-btn-amber" onClick={resetRegFlow}>Register your company <ChevronRight size={16} /></button>
                   <button className="gnt-btn gnt-btn-outline" onClick={() => goto("market")}>View Market Board</button>
