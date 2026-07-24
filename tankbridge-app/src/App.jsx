@@ -2671,23 +2671,23 @@ export default function App() {
             <div className="gnt-grid4">
               <div className="gnt-card">
                 <ShieldCheck size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Pre-vetted, compliant</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every participant is CIPC- and DMRE-screened before a single litre is listed or bid on — a compliance check, not a substitute for your own commercial due diligence. Proven trade history earns a Verified badge, so trusted counterparties stand out.</p>
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Verified Trade Ecosystem</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Trade with verified, compliant counterparties only. Every buyer and seller is CIPC- and DMRE-screened before entering the market. No time-wasters, no fake entities — just pre-vetted trade partners with proven transaction history.</p>
               </div>
               <div className="gnt-card">
                 <BadgeCheck size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Own it or represent it — clearly labelled</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Every seller declares Title Holder or Mandate/Allocation status; every buyer declares direct funds or a financier. Proof of Product and Proof of Funds stay between the two parties — Tankbridge makes sure everyone starts from the same page. We verify who's who — you verify what's real.</p>
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Real Allocation, Direct Connection</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>No phantom offers. Clear ownership from day one. We strictly label Title Holders versus Authorized Mandates, and Direct Buyers versus Financiers. POP and POF are verified upfront so you only negotiate on real, actionable fuel allocation.</p>
               </div>
               <div className="gnt-card">
                 <FileSignature size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Transparent, fixed commission</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>You set your own price — Tankbridge never marks it up or adds a hidden margin. The commission rate is fixed and disclosed to every party before a deal is accepted, whether or not you build it into your quote.</p>
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Zero Hidden Markups</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Your price is your price. 100% transparent pricing. Tankbridge never inflates per-litre prices or hides margins in the quote. Sellers set their offer, brokers set their disclosed rate, and every party trades with total fee transparency.</p>
               </div>
               <div className="gnt-card">
                 <Lock size={22} color="#3f6b52" />
-                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Built-in accountability</h3>
-                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>A 24-month non-circumvention clause with real financial penalties, plus a public blacklist for non-payment or bad faith — so introductions don't just evaporate.</p>
+                <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Guaranteed Deal Protection</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Your introductions and commissions are fully safeguarded. Backed by a 24-month non-circumvention framework and strict compliance enforcement. We actively protect broker relationships and penalize bad-faith actors, ensuring your effort always gets paid.</p>
               </div>
             </div>
           </section>
