@@ -4237,8 +4237,24 @@ export default function App() {
                           )}
                         </td>
                         <td>
-                          <div className={`gnt-badge ${r.commission_status === "paid" ? "approved" : r.commission_status === "payable" ? "selling" : "pending"}`}>{r.commission_status}</div>
-                          {r.commission_amount != null && <div style={{ marginTop: 4, fontWeight: 600 }}>{fmtMoney(r.commission_amount)}</div>}
+                          {(() => {
+                            if (!r.company_id) return <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>—</span>;
+                            const relevantDealIds = adminDeals
+                              .filter(d => d.seller_company_id === r.company_id || d.buyer_company_id === r.company_id)
+                              .map(d => d.id);
+                            const commissions = adminBrokerCommissions.filter(bc => bc.broker_company_id === r.broker_company_id && relevantDealIds.includes(bc.deal_id));
+                            if (commissions.length === 0) return <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>No completed deals yet</span>;
+                            const total = commissions.reduce((sum, bc) => sum + (Number(bc.commission_amount) || 0), 0);
+                            const statuses = [...new Set(commissions.map(bc => bc.commission_status))];
+                            return (
+                              <>
+                                {statuses.map(s => (
+                                  <div key={s} className={`gnt-badge ${s === "paid" ? "approved" : s === "payable" ? "selling" : "pending"}`} style={{ marginBottom: 2 }}>{s}</div>
+                                ))}
+                                <div style={{ marginTop: 4, fontWeight: 600 }}>{fmtMoney(total)} total · {commissions.length} deal{commissions.length > 1 ? "s" : ""}</div>
+                              </>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
