@@ -334,7 +334,7 @@ function LoginGate({ onLoggedIn, onRegisterClick, hideRegisterLink }) {
 }
 
 
-function DealCard({ deal, myCompany, onReported }) {
+function DealCard({ deal, myCompany, onReported, onEscrowUpdated }) {
   const [info, setInfo] = useState(null);
   const [gated, setGated] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -343,6 +343,10 @@ function DealCard({ deal, myCompany, onReported }) {
   const [showReasonPicker, setShowReasonPicker] = useState(false);
   const [selectedReason, setSelectedReason] = useState("");
   const [otherReasonText, setOtherReasonText] = useState("");
+  const [showCustomEscrowForm, setShowCustomEscrowForm] = useState(false);
+  const [customEscrowName, setCustomEscrowName] = useState("");
+  const [customEscrowContact, setCustomEscrowContact] = useState("");
+  const [escrowBusy, setEscrowBusy] = useState(false);
 
   const isSellerViewing = myCompany.id === deal.seller_company_id;
   const myReportedStatus = isSellerViewing ? deal.seller_reported_status : deal.buyer_reported_status;
@@ -400,6 +404,30 @@ function DealCard({ deal, myCompany, onReported }) {
     report("fell_through", reason);
   }
 
+  async function chooseRecommendedEscrow() {
+    setEscrowBusy(true);
+    const { data, error } = await supabase.rpc("propose_escrow", { p_deal_id: deal.id, p_choice_type: "platform_recommended" });
+    setEscrowBusy(false);
+    if (!error && onEscrowUpdated) onEscrowUpdated(data);
+  }
+
+  async function proposeCustomEscrow() {
+    if (!customEscrowName.trim()) return;
+    setEscrowBusy(true);
+    const { data, error } = await supabase.rpc("propose_escrow", {
+      p_deal_id: deal.id, p_choice_type: "custom", p_custom_name: customEscrowName, p_custom_contact: customEscrowContact,
+    });
+    setEscrowBusy(false);
+    if (!error) { setShowCustomEscrowForm(false); if (onEscrowUpdated) onEscrowUpdated(data); }
+  }
+
+  async function respondToEscrow(agree) {
+    setEscrowBusy(true);
+    const { data, error } = await supabase.rpc("respond_to_escrow_proposal", { p_deal_id: deal.id, p_agree: agree });
+    setEscrowBusy(false);
+    if (!error && onEscrowUpdated) onEscrowUpdated(data);
+  }
+
   return (
     <div className="gnt-card" style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -420,6 +448,53 @@ function DealCard({ deal, myCompany, onReported }) {
         <div className="gnt-info-banner"><CheckCircle2 size={16} /> {info.company_name} (CIPC {info.cipc || "—"}) — {info.contact_name}, {info.phone}, {info.email}</div>
       ) : (
         <div className="gnt-alert-banner"><AlertTriangle size={16} /> Could not load contact details.</div>
+      )}
+
+      {checked && !gated && deal.status !== "completed" && deal.status !== "cancelled" && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+          <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 6 }}>Settlement escrow</p>
+          {deal.escrow_agreement_status === "agreed" ? (
+            <p style={{ fontSize: 12.5 }}>
+              {deal.escrow_choice_type === "platform_recommended"
+                ? "Using Tankbridge's recommended escrow provider."
+                : <>Using <strong>{deal.escrow_custom_name}</strong>{deal.escrow_custom_contact ? ` (${deal.escrow_custom_contact})` : ""} — agreed by both parties.</>}
+            </p>
+          ) : deal.escrow_agreement_status === "proposed" ? (
+            deal.escrow_proposed_by === myCompany.id ? (
+              <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>You proposed <strong>{deal.escrow_custom_name}</strong> — waiting on the other party to agree.</p>
+            ) : (
+              <>
+                <p style={{ fontSize: 12.5, marginBottom: 8 }}>The other party proposed <strong>{deal.escrow_custom_name}</strong>{deal.escrow_custom_contact ? ` (${deal.escrow_custom_contact})` : ""} for settlement. Agree to it, or use Tankbridge's recommended provider instead.</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={escrowBusy} onClick={() => respondToEscrow(true)}>Agree</button>
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={escrowBusy} onClick={() => respondToEscrow(false)}>Use recommended instead</button>
+                </div>
+              </>
+            )
+          ) : deal.escrow_agreement_status === "declined" ? (
+            <>
+              <p style={{ fontSize: 12.5, color: "var(--alert)", marginBottom: 8 }}>The proposed escrow wasn't agreed to. Choose again:</p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={escrowBusy} onClick={chooseRecommendedEscrow}>Use Tankbridge's recommended escrow</button>
+                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowCustomEscrowForm(true)}>Propose a different one</button>
+              </div>
+            </>
+          ) : showCustomEscrowForm ? (
+            <>
+              <div className="gnt-field"><label>Escrow provider name</label><input value={customEscrowName} onChange={e => setCustomEscrowName(e.target.value)} /></div>
+              <div className="gnt-field"><label>Contact (optional)</label><input value={customEscrowContact} onChange={e => setCustomEscrowContact(e.target.value)} /></div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={escrowBusy} onClick={proposeCustomEscrow}>Send to other party for agreement</button>
+                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowCustomEscrowForm(false)}>Cancel</button>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={escrowBusy} onClick={chooseRecommendedEscrow}>Use Tankbridge's recommended escrow</button>
+              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowCustomEscrowForm(true)}>Propose our own escrow</button>
+            </div>
+          )}
+        </div>
       )}
 
       {deal.status !== "completed" && deal.status !== "cancelled" && (
@@ -2631,7 +2706,11 @@ export default function App() {
                 </div>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>03</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>30% of a small, disclosed per-litre commission — not a cut of the deal value — and only ever payable if the deal actually completes. No completed deal, no commission for anyone, platform included.</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Earn 70% direct commission on your deals, backed by a transparent per-litre structure. Platform share supports network matching and cross-broker referrals — ensuring zero added cost for buyers and sellers, and guaranteed payout only on completed trades.</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
+                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>04</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Settlement runs through an independent third-party escrow, not Tankbridge and not the broker — every party is paid directly and simultaneously, exactly per the recorded split.</span>
                 </div>
               </div>
             </div>
@@ -2942,7 +3021,7 @@ export default function App() {
                 {regType === "broker" && (
                   <>
                     <h4>6. Referral commission</h4>
-                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration) within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete. As a baseline, Broker's (or Mandate's) share of Tankbridge's brokerage fee is 70%, with Tankbridge keeping 30% — the details below explain how that 70% is shared when more than one party is involved.</p>
+                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration), commission is calculated as follows and disbursed by an independent third-party escrow directly and simultaneously to each party, per the recorded split — Tankbridge and Broker never hold or pass through each other's funds. No commission is payable on deals that do not complete. As a baseline, Broker's (or Mandate's) share of Tankbridge's brokerage fee is 70%, with Tankbridge keeping 30% — the details below explain how that 70% is shared when more than one party is involved. This protection also follows the specific buyer-seller relationship for 24 months from their first completed deal — if they trade again later without a fresh referral, the original commission structure still applies.</p>
                     <p><strong>Simple Introduction</strong> (Broker introduces the party, but doesn't negotiate price or commission on their behalf): Broker receives 70% of Tankbridge's brokerage fee on the matched deal.</p>
                     <p><strong>Mandate</strong> (Broker actively negotiates price and commission on the referred party's behalf via the Market Board): Broker gets the 70% broker pool. If the other side also has its own active Mandate, Broker splits that 70% evenly with them. If not, but the other side still has a separate broker who introduced them, that broker gets a small 10% share and Broker keeps the rest.</p>
                     <p>For a referred seller, the Wholesale License copy submitted is used by admin to verify CIPC and DMRE; for a referred buyer, the CIPC number submitted is confirmed accurate to the best of Broker's knowledge.</p>
@@ -3424,7 +3503,7 @@ export default function App() {
                   )}
                   {myDeals.filter(d => d.status !== "cancelled").length === 0 && <div className="gnt-empty">No matched deals yet.</div>}
                   {myDeals.filter(d => d.status !== "cancelled").map(d => (
-                    <DealCard key={d.id} deal={d} myCompany={myCompany} onReported={loadMyDeals} />
+                    <DealCard key={d.id} deal={d} myCompany={myCompany} onReported={loadMyDeals} onEscrowUpdated={loadMyDeals} />
                   ))}
 
                   {myCompany.type === "seller" && myDeals.filter(d => d.status !== "cancelled").length > 0 && !myCompany.imfpa_signed && (
@@ -3593,7 +3672,7 @@ export default function App() {
                     <div className="gnt-doc-box" style={{ maxHeight: 200 }}>
                       <h4>Referral Agreement</h4>
                       <p>By submitting this referral, {myCompany.company_name} ("Introducer") confirms it is introducing the above party to Tankbridge in good faith. For a seller, the Wholesale License copy provided is used by admin to verify the CIPC and DMRE details; for a buyer, the CIPC number provided is confirmed accurate to the best of Introducer's knowledge.</p>
-                      <p>If Tankbridge concludes a deal involving this referral within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete. As a baseline, your share of Tankbridge's brokerage fee is 70%, with Tankbridge keeping 30% — the details below explain how that 70% is shared when more than one party is involved.</p>
+                      <p>If Tankbridge concludes a deal involving this referral, commission is calculated as follows and disbursed by an independent third-party escrow directly and simultaneously to each party, per the recorded split — Tankbridge and you never hold or pass through each other's funds. No commission is payable on deals that do not complete. As a baseline, your share of Tankbridge's brokerage fee is 70%, with Tankbridge keeping 30% — the details below explain how that 70% is shared when more than one party is involved. This protection also follows the specific buyer-seller relationship for 24 months from their first completed deal — if they trade again later without a fresh referral, the original commission structure still applies.</p>
                       <p><strong>Simple Introduction</strong> (you introduce the party, but don't negotiate price or commission on their behalf): you receive 70% of Tankbridge's brokerage fee on the matched deal.</p>
                       <p><strong>Mandate</strong> (you actively negotiate price and commission on the referred party's behalf via the Market Board): you get the 70% broker pool. If the other side also has its own active Mandate, you split that 70% evenly. If not, but the other side still has a separate broker who introduced them, that broker gets a small 10% share and you keep the rest.</p>
                     </div>
@@ -3738,7 +3817,7 @@ export default function App() {
                   {renderMyNegotiations()}
 
                   <h3 style={{ fontSize: 20, margin: "28px 0 10px" }}>My commissions</h3>
-                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Automatically tracked for any deal completed by a company you referred, within 24 months of their registration — no manual linking needed.</p>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>Automatically tracked for any deal completed by a company you referred (or by that buyer-seller pair again later) — no manual linking needed. Paid out directly and simultaneously by an independent third-party escrow, not by Tankbridge or passed through your account.</p>
                   {myBrokerCommissions.length === 0 && <div className="gnt-empty">No commissions tracked yet.</div>}
                   {myBrokerCommissions.map(c => (
                     <div key={c.id} className="gnt-card" style={{ marginBottom: 10 }}>
