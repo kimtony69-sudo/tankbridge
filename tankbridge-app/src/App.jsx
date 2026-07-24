@@ -534,6 +534,7 @@ export default function App() {
   const [inviteForm, setInviteForm] = useState({ password: "", confirmPassword: "", contactName: "", phone: "", email: "", cipc: "", dmreLicense: "" });
   const [inviteError, setInviteError] = useState("");
   const [inviteNcndaAgree, setInviteNcndaAgree] = useState(false);
+  const [inviteRetainMandate, setInviteRetainMandate] = useState(true);
   const [inviteNcndaName, setInviteNcndaName] = useState("");
   const [inviteNcndaScrolledEnd, setInviteNcndaScrolledEnd] = useState(false);
   const [checkinResult, setCheckinResult] = useState(null);
@@ -838,6 +839,7 @@ export default function App() {
       p_ncnda_signed_by: inviteNcndaName,
       p_cipc: inviteReferral?.referred_type === "seller" ? inviteForm.cipc : null,
       p_dmre_license: inviteReferral?.referred_type === "seller" ? inviteForm.dmreLicense : null,
+      p_retain_mandate: inviteRetainMandate,
     });
     if (error) { setInviteError(error.message); return; }
     const { data: co } = await supabase.from("companies").select("*").eq("user_id", session.user.id).maybeSingle();
@@ -1684,14 +1686,14 @@ export default function App() {
                     const vol = Number(o.listings?.volume || 0);
                     const total = rate * vol;
                     const otherActive = isBuyerSide ? !!o.seller_negotiator_id : !!o.buyer_negotiator_id;
-                    const bothActiveShare = total * 0.30;
-                    const soloHighShare = total * 0.60;
-                    const soloLowShare = total * 0.50;
+                    const bothActiveShare = total * 0.35;
+                    const soloHighShare = total * 0.70;
+                    const soloLowShare = total * 0.60;
                     return (
                       <p className="hint" style={{ marginTop: 8 }}>
-                        Estimated split on this commission (platform always takes 40% first): {
+                        Estimated split on this commission (broker pool is 70%, platform takes 30%): {
                           otherActive
-                            ? <>you and the other party's representative split the rest evenly — roughly <strong>{fmtMoney(bothActiveShare)}/ℓ each</strong>.</>
+                            ? <>you and the other party's representative split the 70% pool evenly — roughly <strong>{fmtMoney(bothActiveShare)}/ℓ each</strong>.</>
                             : <>your estimated share is roughly <strong>{fmtMoney(soloLowShare)}/ℓ to {fmtMoney(soloHighShare)}/ℓ</strong>, depending on whether the other side has its own referring broker.</>
                         }
                       </p>
@@ -2468,6 +2470,15 @@ export default function App() {
                 <div className="gnt-sig-line">This document is a highly restrictive and legally binding agreement designed to protect proprietary platform relationships. Tankbridge strongly advises the Party to obtain independent legal counsel before agreeing to these terms. By checking "I have read all of it, and I agree" or registering on the platform, you acknowledge that you have read, understood, and agreed to be bound by the severe financial penalties outlined herein.</div>
               </div>
               {inviteError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {inviteError}</div>}
+              <div className="gnt-card" style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 6 }}>One more thing</h4>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 12 }}>The broker who introduced you negotiated this deal on your behalf. Would you like them to keep representing you in future deals too?</p>
+                <div className="gnt-type-toggle">
+                  <button type="button" className={inviteRetainMandate ? "active" : ""} onClick={() => setInviteRetainMandate(true)}>Yes, keep them as my Mandate</button>
+                  <button type="button" className={!inviteRetainMandate ? "active" : ""} onClick={() => setInviteRetainMandate(false)}>No, I'll handle deals myself from here</button>
+                </div>
+                <p className="hint" style={{ marginTop: 8 }}>You can change this later from your Dashboard. Either way, you're always free to log in and manage your own listings and deals directly.</p>
+              </div>
               <form onSubmit={submitInviteRegistration}>
                 <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 6, cursor: inviteNcndaScrolledEnd ? "pointer" : "not-allowed", opacity: inviteNcndaScrolledEnd ? 1 : 0.5 }}>
                   <input type="checkbox" checked={inviteNcndaAgree} disabled={!inviteNcndaScrolledEnd} onChange={e => setInviteNcndaAgree(e.target.checked)} style={{ marginTop: 3 }} />
@@ -2931,9 +2942,9 @@ export default function App() {
                 {regType === "broker" && (
                   <>
                     <h4>6. Referral commission</h4>
-                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration) within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete.</p>
-                    <p><strong>Simple Introduction</strong> (Broker introduces the party, but doesn't negotiate price or commission on their behalf): Broker receives 30% of Tankbridge's brokerage fee on the matched deal.</p>
-                    <p><strong>Mandate</strong> (Broker actively negotiates price and commission on the referred party's behalf via the Market Board): Tankbridge keeps at most 40% of the negotiated commission — Broker gets the rest. If the other side also has its own active mandate, Broker splits that evenly with them. If not, but the other side still has a separate broker who introduced them, that broker gets a small 10% share and Broker keeps the rest.</p>
+                    <p>If Tankbridge concludes a deal involving a party referred by Broker (including the referral submitted with this registration) within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete. As a baseline, Broker's (or Mandate's) share of Tankbridge's brokerage fee is 70%, with Tankbridge keeping 30% — the details below explain how that 70% is shared when more than one party is involved.</p>
+                    <p><strong>Simple Introduction</strong> (Broker introduces the party, but doesn't negotiate price or commission on their behalf): Broker receives 70% of Tankbridge's brokerage fee on the matched deal.</p>
+                    <p><strong>Mandate</strong> (Broker actively negotiates price and commission on the referred party's behalf via the Market Board): Broker gets the 70% broker pool. If the other side also has its own active Mandate, Broker splits that 70% evenly with them. If not, but the other side still has a separate broker who introduced them, that broker gets a small 10% share and Broker keeps the rest.</p>
                     <p>For a referred seller, the Wholesale License copy submitted is used by admin to verify CIPC and DMRE; for a referred buyer, the CIPC number submitted is confirmed accurate to the best of Broker's knowledge.</p>
                   </>
                 )}
@@ -3087,6 +3098,25 @@ export default function App() {
                   </form>
                 )}
               </div>
+
+              {myCompany.status === "approved" && myCompany.referred_by_broker_id && (
+                <div className="gnt-card" style={{ marginBottom: 26 }}>
+                  <h3 style={{ fontSize: 18, marginBottom: 6 }}>Mandate representation</h3>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>
+                    {myCompany.authorized_negotiator_id
+                      ? "The broker who introduced you can currently negotiate future deals on your behalf."
+                      : "You're currently handling your own deals directly."}
+                  </p>
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={async () => {
+                    const { data, error } = await supabase.rpc("set_mandate_retention", { p_retain: !myCompany.authorized_negotiator_id });
+                    if (error) { showToast(error.message, "err"); return; }
+                    setMyCompany(data);
+                    showToast(data.authorized_negotiator_id ? "Your broker can now negotiate on your behalf again." : "You're now handling deals yourself.");
+                  }}>
+                    {myCompany.authorized_negotiator_id ? "Handle deals myself instead" : "Let my broker represent me again"}
+                  </button>
+                </div>
+              )}
 
               {myCompany.status === "approved" && myCompany.type !== "broker" && (
                 <div className="gnt-card" style={{ marginBottom: 26 }}>
@@ -3563,9 +3593,9 @@ export default function App() {
                     <div className="gnt-doc-box" style={{ maxHeight: 200 }}>
                       <h4>Referral Agreement</h4>
                       <p>By submitting this referral, {myCompany.company_name} ("Introducer") confirms it is introducing the above party to Tankbridge in good faith. For a seller, the Wholesale License copy provided is used by admin to verify the CIPC and DMRE details; for a buyer, the CIPC number provided is confirmed accurate to the best of Introducer's knowledge.</p>
-                      <p>If Tankbridge concludes a deal involving this referral within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete.</p>
-                      <p><strong>Simple Introduction</strong> (you introduce the party, but don't negotiate price or commission on their behalf): you receive 30% of Tankbridge's brokerage fee on the matched deal.</p>
-                      <p><strong>Mandate</strong> (you actively negotiate price and commission on the referred party's behalf via the Market Board): Tankbridge keeps at most 40% of the negotiated commission — you get the rest. If the other side also has its own active mandate, you split that evenly. If not, but the other side still has a separate broker who introduced them, that broker gets a small 10% share and you keep the rest.</p>
+                      <p>If Tankbridge concludes a deal involving this referral within 24 months of the referred party's registration, commission is calculated as follows, once admin has linked the deal and recorded the fee. No commission is payable on deals that do not complete. As a baseline, your share of Tankbridge's brokerage fee is 70%, with Tankbridge keeping 30% — the details below explain how that 70% is shared when more than one party is involved.</p>
+                      <p><strong>Simple Introduction</strong> (you introduce the party, but don't negotiate price or commission on their behalf): you receive 70% of Tankbridge's brokerage fee on the matched deal.</p>
+                      <p><strong>Mandate</strong> (you actively negotiate price and commission on the referred party's behalf via the Market Board): you get the 70% broker pool. If the other side also has its own active Mandate, you split that 70% evenly. If not, but the other side still has a separate broker who introduced them, that broker gets a small 10% share and you keep the rest.</p>
                     </div>
                     <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13.5, marginBottom: 16, cursor: "pointer" }}>
                       <input type="checkbox" checked={referralAgree} onChange={e => setReferralAgree(e.target.checked)} style={{ marginTop: 3 }} />
