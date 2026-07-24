@@ -991,7 +991,7 @@ export default function App() {
 
   const loadMyBrokerCommissions = useCallback(async () => {
     if (!myCompany || myCompany.type !== "broker") return;
-    const { data } = await supabase.from("deal_broker_commissions").select("*, deals(product, volume, unit_price, created_at)")
+    const { data } = await supabase.from("deal_broker_commissions").select("*, deals(product, volume, unit_price, created_at, seller_company_id, buyer_company_id)")
       .eq("broker_company_id", myCompany.id).order("created_at", { ascending: false });
     setMyBrokerCommissions(data || []);
   }, [myCompany]);
@@ -3749,8 +3749,21 @@ export default function App() {
                           )}
                         </div>
                         <div style={{ textAlign: "right" }}>
-                          <div className="gnt-badge pending">{r.commission_status}</div>
-                          {r.commission_amount != null && <div style={{ marginTop: 6, fontWeight: 600 }}>{fmtMoney(r.commission_amount)}</div>}
+                          {(() => {
+                            if (!r.company_id) return <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>—</span>;
+                            const commissions = myBrokerCommissions.filter(bc =>
+                              bc.deals && (bc.deals.seller_company_id === r.company_id || bc.deals.buyer_company_id === r.company_id)
+                            );
+                            if (commissions.length === 0) return <span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>No completed deals yet</span>;
+                            const total = commissions.reduce((sum, bc) => sum + (Number(bc.commission_amount) || 0), 0);
+                            const statuses = [...new Set(commissions.map(bc => bc.commission_status))];
+                            return (
+                              <>
+                                {statuses.map(s => <div key={s} className={`gnt-badge ${s === "paid" ? "approved" : s === "payable" ? "selling" : "pending"}`}>{s}</div>)}
+                                <div style={{ marginTop: 6, fontWeight: 600 }}>{fmtMoney(total)} total</div>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                       {resubmittingReferralId === r.id && resubmitReferralForm && (
