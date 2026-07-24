@@ -712,6 +712,14 @@ export default function App() {
   const [myOffers, setMyOffers] = useState([]);
   const [offerCounterInputs, setOfferCounterInputs] = useState({});
   const [offerCommissionInputs, setOfferCommissionInputs] = useState({});
+  const [offerShareInputs, setOfferShareInputs] = useState({});
+  const [counterTarget, setCounterTarget] = useState(null);
+  const [counterPrice, setCounterPrice] = useState("");
+  const [counterCommission, setCounterCommission] = useState("");
+  const [counterRepresented, setCounterRepresented] = useState("");
+  const [counterError, setCounterError] = useState("");
+  const [counterSubmitting, setCounterSubmitting] = useState(false);
+  const [myRepresentedCompanies, setMyRepresentedCompanies] = useState([]);
   const [referralRejectingId, setReferralRejectingId] = useState(null);
   const [referralRejectReasonInput, setReferralRejectReasonInput] = useState("");
   const [resubmittingReferralId, setResubmittingReferralId] = useState(null);
@@ -998,9 +1006,12 @@ export default function App() {
 
   const loadMyOffers = useCallback(async () => {
     if (!myCompany) return;
-    const { data: represented } = await supabase.from("companies").select("id")
-      .eq("referred_by_broker_id", myCompany.id).is("user_id", null);
-    const ids = [myCompany.id, ...(represented || []).map(c => c.id)];
+    const [{ data: placeholderReps }, { data: retainedReps }] = await Promise.all([
+      supabase.from("companies").select("id").eq("referred_by_broker_id", myCompany.id).is("user_id", null),
+      supabase.from("companies").select("id").eq("authorized_negotiator_id", myCompany.id),
+    ]);
+    const represented = [...(placeholderReps || []), ...(retainedReps || [])];
+    const ids = [myCompany.id, ...new Set(represented.map(c => c.id))];
     const orClause = ids.map(id => `buyer_company_id.eq.${id},seller_company_id.eq.${id}`).join(",");
     const { data } = await supabase.from("offers").select("*, listings(product, volume, location, terms, procedures)")
       .or(orClause)
@@ -1747,7 +1758,10 @@ export default function App() {
                       <>
                         <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 120 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         <input type="number" min="0" step="0.01" placeholder="Commission (optional)" style={{ width: 150 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
-                        <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey])}>
+                        {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
+                          <input type="number" min="0" max="35" step="1" placeholder="My share % (0-35)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                        )}
+                        <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey], offerShareInputs[counterKey])}>
                           {offerActionBusy === o.id + "counter" ? "Sending…" : "Counter"}
                         </button>
                       </>
@@ -1756,19 +1770,23 @@ export default function App() {
                       {offerActionBusy === o.id + "decline" ? "Declining…" : "Decline"}
                     </button>
                   </div>
+                  {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
+                    <p className="hint" style={{ marginTop: 6 }}>Both sides have a Mandate on this deal — you can each set your own share of the 70% broker pool (0–35% each, combined max 70%). Leave blank to keep the current 35% default.</p>
+                  )}
                   {isDelegate && offerCommissionInputs[counterKey] && Number(offerCommissionInputs[counterKey]) > 0 && (() => {
                     const rate = Number(offerCommissionInputs[counterKey]);
                     const vol = Number(o.listings?.volume || 0);
                     const total = rate * vol;
                     const otherActive = isBuyerSide ? !!o.seller_negotiator_id : !!o.buyer_negotiator_id;
-                    const bothActiveShare = total * 0.35;
+                    const myShare = offerShareInputs[counterKey] ? Number(offerShareInputs[counterKey]) / 100 : 0.35;
+                    const bothActiveShare = total * myShare;
                     const soloHighShare = total * 0.70;
                     const soloLowShare = total * 0.60;
                     return (
                       <p className="hint" style={{ marginTop: 8 }}>
                         Estimated split on this commission (broker pool is 70%, platform takes 30%): {
                           otherActive
-                            ? <>you and the other party's representative split the 70% pool evenly — roughly <strong>{fmtMoney(bothActiveShare)}/ℓ each</strong>.</>
+                            ? <>at a {Math.round(myShare * 100)}% share, your estimated cut is roughly <strong>{fmtMoney(bothActiveShare)}/ℓ</strong> (default is 35% each if you don't negotiate a share).</>
                             : <>your estimated share is roughly <strong>{fmtMoney(soloLowShare)}/ℓ to {fmtMoney(soloHighShare)}/ℓ</strong>, depending on whether the other side has its own referring broker.</>
                         }
                       </p>
@@ -1784,12 +1802,13 @@ export default function App() {
     );
   }
 
-  async function respondToOffer(offerId, action, priceValue, commissionValue) {
+  async function respondToOffer(offerId, action, priceValue, commissionValue, sharePctValue) {
     setOfferActionBusy(offerId + action);
     const { data, error } = await supabase.rpc("respond_to_offer", {
       p_offer_id: offerId, p_action: action,
       p_price: priceValue ? Number(priceValue) : null,
       p_commission_rate: commissionValue ? Number(commissionValue) : null,
+      p_my_share_pct: sharePctValue !== undefined && sharePctValue !== "" ? Number(sharePctValue) / 100 : null,
     });
     setOfferActionBusy(null);
     if (error) { showToast(error.message, "err"); return; }
@@ -1807,6 +1826,38 @@ export default function App() {
       : action === "decline" ? "Negotiation declined."
       : "Counter-offer sent — the other party has been emailed."
     );
+  }
+
+  async function openCounter(listing) {
+    setCounterTarget(listing);
+    setCounterPrice("");
+    setCounterCommission("");
+    setCounterRepresented("");
+    setCounterError("");
+    if (session) {
+      const { data } = await supabase.rpc("get_my_represented_companies");
+      const neededType = listing.kind === "sell" ? "buyer" : "seller";
+      setMyRepresentedCompanies((data || []).filter(c => c.type === neededType));
+    }
+  }
+
+  async function submitCounterOffer() {
+    const price = Number(counterPrice);
+    if (!price || price <= 0) { setCounterError("Please enter a valid price."); return; }
+    setCounterSubmitting(true);
+    setCounterError("");
+    const { error } = await supabase.rpc("submit_counter_offer", {
+      p_listing_id: counterTarget.id,
+      p_price: price,
+      p_commission_rate: counterCommission ? Number(counterCommission) : null,
+      p_represented_company_id: counterRepresented || null,
+    });
+    setCounterSubmitting(false);
+    if (error) { setCounterError(error.message); return; }
+    setCounterTarget(null);
+    await loadMyOffers();
+    await loadMarketBoard();
+    showToast("Counter-offer sent — see My negotiations on your Dashboard to track it.");
   }
 
   function openAccept(listing) {
@@ -3906,7 +3957,10 @@ export default function App() {
                       {l.price_mode === "seller_offer" ? (
                         <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openSubmitOffer(l)}>Submit offer <ChevronRight size={13} /></button>
                       ) : (
-                        <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(l)}>Accept price <ChevronRight size={13} /></button>
+                        <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
+                          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(l)}>Accept price <ChevronRight size={13} /></button>
+                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => openCounter(l)}>Counter offer</button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -4449,6 +4503,46 @@ export default function App() {
               )}
               <button className="gnt-btn gnt-btn-ghost" onClick={() => { setDetailCompany(null); setShowAdminEditCompany(false); }}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Counter offer modal — for fixed-price listings, from the opposite side or their Mandate */}
+      {counterTarget && (
+        <div className="gnt-modal-backdrop" onClick={() => setCounterTarget(null)}>
+          <div className="gnt-modal" onClick={e => e.stopPropagation()}>
+            {!session ? (
+              <>
+                <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to counter this price</h3>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in with your account to send a counter-offer. New here? Register first.</p>
+                <LoginGate
+                  onLoggedIn={() => { setCounterTarget(null); goto("dashboard"); }}
+                  onRegisterClick={() => { setCounterTarget(null); resetRegFlow(); }}
+                />
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontSize: 20, marginBottom: 6 }}>Counter this offer</h3>
+                <p style={{ fontSize: 13, color: "var(--steel-soft)", marginBottom: 14 }}>{counterTarget.product} · {Number(counterTarget.volume).toLocaleString()} ℓ · {fmtTerms(counterTarget.terms)} · {counterTarget.location} · listed at {fmtMoney(counterTarget.unit_price)}/ℓ</p>
+                {myRepresentedCompanies.length > 0 && (
+                  <div className="gnt-field">
+                    <label>Acting as (optional — leave blank to counter as yourself)</label>
+                    <select value={counterRepresented} onChange={e => setCounterRepresented(e.target.value)}>
+                      <option value="">Myself ({myCompany?.company_name})</option>
+                      {myRepresentedCompanies.map(c => <option key={c.id} value={c.id}>On behalf of {c.company_name}</option>)}
+                    </select>
+                  </div>
+                )}
+                {counterError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {counterError}</div>}
+                <div className="gnt-field"><label>Your counter price (R / litre)</label><input type="number" min="0" step="0.01" value={counterPrice} onChange={e => setCounterPrice(e.target.value)} placeholder="20.40" /></div>
+                <div className="gnt-field"><label>Commission (optional — only relevant if you're representing someone as their Mandate)</label><input type="number" min="0" step="0.01" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                <p className="hint" style={{ marginBottom: 12 }}>The other party can accept, counter back, or decline (up to 2 rounds each). Track this from "My negotiations" on your Dashboard.</p>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="gnt-btn gnt-btn-amber" disabled={counterSubmitting} onClick={submitCounterOffer}>{counterSubmitting ? "Sending…" : "Send counter-offer"}</button>
+                  <button className="gnt-btn gnt-btn-ghost" onClick={() => setCounterTarget(null)}>Cancel</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
