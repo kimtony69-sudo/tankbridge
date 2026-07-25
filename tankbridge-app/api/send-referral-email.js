@@ -159,7 +159,7 @@ export default async function handler(req, res) {
               <p style="margin:2px 0;"><strong>Asking price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
               <p style="margin:2px 0;"><strong>Terms:</strong> ${terms}</p>
               <p style="margin:2px 0;"><strong>Location:</strong> ${referral.location}</p>
-              <p style="margin:2px 0;"><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate || 0.10).toFixed(2)} / litre</p>
+              <p style="margin:2px 0;"><strong>Commission:</strong> ${Math.round(Number(referral.proposed_commission_rate || 0.10) * 100)} cents / litre</p>
             </div>
             <p>If this all looks right, one click puts you live on the Market Board — free to list, no obligation, and you're only ever contacted once a real, verified buyer accepts.</p>
             <p style="margin-top:20px;">
@@ -182,7 +182,7 @@ export default async function handler(req, res) {
 
       const claimUrl = `https://tankbridge.co.za/?co_broker_claim=1&token=${referral.co_broker_confirm_token}`;
       const shareLine = referral.co_broker_share_mode === "fixed"
-        ? `<strong>${broker?.company_name || "The introducing broker"} keeps R ${Number(referral.co_broker_fixed_amount).toFixed(2)}/litre first, and you get whatever's left of the brokerage fee.</strong>`
+        ? `<strong>${broker?.company_name || "The introducing broker"} keeps ${Math.round(Number(referral.co_broker_fixed_amount) * 100)}c/litre first, and you get whatever's left of the brokerage fee.</strong>`
         : `<strong>${Math.round((1 - Number(referral.co_broker_split_pct)) * 100)}% to you, ${Math.round(Number(referral.co_broker_split_pct) * 100)}% to ${broker?.company_name || "the introducing broker"}</strong>.`;
 
       try {
@@ -198,7 +198,7 @@ export default async function handler(req, res) {
             <p><strong>Price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
             <p><strong>Terms:</strong> ${terms}</p>
             <p><strong>Location:</strong> ${referral.location}</p>
-            ${referral.referred_type === "seller" && referral.proposed_commission_rate ? `<p><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate).toFixed(2)} / litre</p>` : ""}
+            ${referral.referred_type === "seller" && referral.proposed_commission_rate ? `<p><strong>Commission:</strong> ${Math.round(Number(referral.proposed_commission_rate) * 100)} cents / litre</p>` : ""}
             <p>If you confirm, you'll register this ${referral.referred_type} yourself with the real details. Of the Tankbridge brokerage fee on this deal: ${shareLine}</p>
             <p style="margin-top:20px;">
               <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">I know them — let's proceed</a>
@@ -217,10 +217,10 @@ export default async function handler(req, res) {
       if (!broker?.email || broker.email === "-") return res.status(200).json({ ok: true, skipped: true });
       const disputeUrl = `https://tankbridge.co.za/?split_dispute=1&token=${referral.co_broker_dispute_token}`;
       const currentLine = referral.co_broker_share_mode === "fixed"
-        ? `You keep R ${Number(referral.co_broker_fixed_amount).toFixed(2)}/litre first, they get the rest`
+        ? `You keep ${Math.round(Number(referral.co_broker_fixed_amount) * 100)}c/litre first, they get the rest`
         : `${Math.round(Number(referral.co_broker_split_pct) * 100)}% to them, ${Math.round((1 - Number(referral.co_broker_split_pct)) * 100)}% to you`;
       const proposedLine = referral.co_broker_share_mode === "fixed"
-        ? `They're proposing: you keep R ${Number(referral.co_broker_disputed_amount).toFixed(2)}/litre first, they get the rest`
+        ? `They're proposing: you keep ${Math.round(Number(referral.co_broker_disputed_amount) * 100)}c/litre first, they get the rest`
         : `They're proposing: ${Math.round(Number(referral.co_broker_disputed_split_pct) * 100)}% to them, ${Math.round((1 - Number(referral.co_broker_disputed_split_pct)) * 100)}% to you`;
 
       try {
