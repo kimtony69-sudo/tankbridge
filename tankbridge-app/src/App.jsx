@@ -626,6 +626,16 @@ export default function App() {
     return null;
   })();
 
+  const splitDisputeParams = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("split_dispute") === "1" && p.get("token")) {
+        return { token: p.get("token") };
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+
   const requestedView = (() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -634,13 +644,24 @@ export default function App() {
     } catch { return null; }
   })();
 
-  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : coBrokerClaimParams ? "co_broker_claim" : requestedView || "landing");
+  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : coBrokerClaimParams ? "co_broker_claim" : splitDisputeParams ? "split_dispute" : requestedView || "landing");
   const [coBrokerClaimData, setCoBrokerClaimData] = useState(null);
   const [coBrokerClaimLoading, setCoBrokerClaimLoading] = useState(true);
   const [coBrokerClaimError, setCoBrokerClaimError] = useState("");
   const [coBrokerClaimResult, setCoBrokerClaimResult] = useState(null);
   const [showCoBrokerDeclineForm, setShowCoBrokerDeclineForm] = useState(false);
   const [coBrokerDeclineReason, setCoBrokerDeclineReason] = useState("");
+  const [showSplitDisputeForm, setShowSplitDisputeForm] = useState(false);
+  const [splitDisputePct, setSplitDisputePct] = useState("60");
+  const [splitDisputeAmount, setSplitDisputeAmount] = useState("");
+  const [splitDisputeNote, setSplitDisputeNote] = useState("");
+  const [splitDisputeSubmitting, setSplitDisputeSubmitting] = useState(false);
+  const [splitDisputeSentOk, setSplitDisputeSentOk] = useState(false);
+  const [splitDisputeData, setSplitDisputeData] = useState(null);
+  const [splitDisputeLoading, setSplitDisputeLoading] = useState(true);
+  const [splitDisputeError, setSplitDisputeError] = useState("");
+  const [splitDisputeResult, setSplitDisputeResult] = useState(null);
+  const [splitDisputeResolving, setSplitDisputeResolving] = useState(false);
   const [coBrokerClaimForm, setCoBrokerClaimForm] = useState({
     companyName: "", cipc: "", email: "", contactName: "", phone: "",
     product: "", volume: "", unitPrice: "", location: "", terms: [], notes: "", commissionRate: "0.10",
@@ -932,6 +953,55 @@ export default function App() {
     setCoBrokerClaimSubmitting(false);
     setCoBrokerClaimResult({ claimed: true });
     await loadMyReferrals();
+  }
+
+  async function submitSplitDispute() {
+    if (!splitDisputePct && !splitDisputeAmount) { setCoBrokerClaimError("Please enter the split you agreed on."); return; }
+    setSplitDisputeSubmitting(true);
+    setCoBrokerClaimError("");
+    const isFixed = coBrokerClaimData.co_broker_share_mode === "fixed";
+    const { error } = await supabase.rpc("submit_co_broker_split_dispute", {
+      p_claim_token: coBrokerClaimParams.token,
+      p_disputed_split_pct: isFixed ? null : Number(splitDisputePct) / 100,
+      p_disputed_amount: isFixed ? Number(splitDisputeAmount) : null,
+      p_note: splitDisputeNote || null,
+    });
+    if (error) { setSplitDisputeSubmitting(false); setCoBrokerClaimError(error.message); return; }
+    await fetch("/api/send-referral-email", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "split_dispute", referralId: coBrokerClaimData.id }),
+    });
+    setSplitDisputeSubmitting(false);
+    setSplitDisputeSentOk(true);
+    setCoBrokerClaimData(d => ({ ...d, co_broker_dispute_status: "pending" }));
+  }
+
+  // ---------- SPLIT DISPUTE CONFIRM (originating broker, no login required) ----------
+  useEffect(() => {
+    if (!splitDisputeParams) { setSplitDisputeLoading(false); return; }
+    (async () => {
+      const { data, error } = await supabase.rpc("get_split_dispute_by_token", { p_token: splitDisputeParams.token });
+      if (error || !data || data.length === 0) { setSplitDisputeError("This link is invalid or has expired."); setSplitDisputeLoading(false); return; }
+      setSplitDisputeData(data[0]);
+      setSplitDisputeLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function resolveSplitDispute(accept) {
+    setSplitDisputeResolving(true);
+    setSplitDisputeError("");
+    const { data, error } = await supabase.rpc("resolve_co_broker_split_dispute", {
+      p_dispute_token: splitDisputeParams.token, p_accept: accept,
+    });
+    if (error) { setSplitDisputeResolving(false); setSplitDisputeError(error.message); return; }
+    const referralId = Array.isArray(data) ? data[0]?.id : data?.id;
+    await fetch("/api/send-referral-email", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "split_dispute_resolved", referralId }),
+    });
+    setSplitDisputeResolving(false);
+    setSplitDisputeResult({ accepted: accept });
   }
 
   function updateInviteField(field, value) { setInviteForm(f => ({ ...f, [field]: value })); }
@@ -2505,6 +2575,20 @@ export default function App() {
                 </div>
               )}
             </div>
+          ) : coBrokerClaimData.co_broker_dispute_status === "pending" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <Clock size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Waiting for {coBrokerClaimData.originating_broker_name} to confirm</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>You said the commission split on file isn't what you agreed. We've sent {coBrokerClaimData.originating_broker_name} the split you proposed to confirm. Your registration will continue once they respond — reload this page to check.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : coBrokerClaimData.co_broker_dispute_status === "rejected" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>{coBrokerClaimData.originating_broker_name} didn't agree with the split you proposed</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>This has been flagged to Tankbridge to help sort out. We'll be in touch before this registration can continue.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
           ) : (
             <form onSubmit={submitCoBrokerClaim} className="gnt-card" style={{ padding: "32px 28px" }}>
               <h2 style={{ fontSize: 22, marginBottom: 6 }}>Confirm and register this {coBrokerClaimData.referred_type}</h2>
@@ -2536,9 +2620,10 @@ export default function App() {
               </div>
               <div className="gnt-field"><label>Location</label><input value={coBrokerClaimForm.location} onChange={e => setCoBrokerClaimForm(f => ({ ...f, location: e.target.value }))} /></div>
               <div className="gnt-field"><label>Terms</label><TermsCheckboxGroup value={coBrokerClaimForm.terms} onChange={v => setCoBrokerClaimForm(f => ({ ...f, terms: v }))} /></div>
-              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                 <button className="gnt-btn gnt-btn-amber" type="submit" disabled={coBrokerClaimSubmitting}>{coBrokerClaimSubmitting ? "Submitting…" : "Confirm & submit for verification"}</button>
                 <button className="gnt-btn gnt-btn-ghost" type="button" onClick={() => setShowCoBrokerDeclineForm(true)}>I don't know this company</button>
+                <button className="gnt-btn gnt-btn-danger" type="button" onClick={() => setShowSplitDisputeForm(true)}>This isn't the split we agreed</button>
               </div>
               {showCoBrokerDeclineForm && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
@@ -2546,7 +2631,92 @@ export default function App() {
                   <button className="gnt-btn gnt-btn-danger gnt-btn-sm" type="button" onClick={submitCoBrokerDecline}>Confirm decline</button>
                 </div>
               )}
+              {showSplitDisputeForm && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+                  {splitDisputeSentOk ? (
+                    <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Sent to {coBrokerClaimData.originating_broker_name} for confirmation. This page will update once they respond.</p>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 12 }}>Tell us what you actually agreed with {coBrokerClaimData.originating_broker_name}. We'll send it to them to confirm before this registration goes ahead.</p>
+                      {coBrokerClaimData.co_broker_share_mode === "fixed" ? (
+                        <div className="gnt-field"><label>What you agreed you'd keep first (R / litre)</label><input type="number" step="0.01" min="0" value={splitDisputeAmount} onChange={e => setSplitDisputeAmount(e.target.value)} /></div>
+                      ) : (
+                        <div className="gnt-field"><label>The split you agreed on (your %)</label><input type="number" min="0" max="100" value={splitDisputePct} onChange={e => setSplitDisputePct(e.target.value)} /></div>
+                      )}
+                      <div className="gnt-field"><label>Note (optional)</label><textarea rows={2} placeholder="e.g. We agreed 60/40 over the phone on…" value={splitDisputeNote} onChange={e => setSplitDisputeNote(e.target.value)} /></div>
+                      <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="button" disabled={splitDisputeSubmitting} onClick={submitSplitDispute}>{splitDisputeSubmitting ? "Sending…" : `Send to ${coBrokerClaimData.originating_broker_name} for confirmation`}</button>
+                    </>
+                  )}
+                </div>
+              )}
             </form>
+          )}
+        </div>
+      )}
+
+      {/* ===================== SPLIT DISPUTE CONFIRM (public, no login) ===================== */}
+      {view === "split_dispute" && (
+        <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 560, margin: "0 auto" }}>
+          {splitDisputeLoading ? (
+            <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
+          ) : splitDisputeError && !splitDisputeData ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Link not found</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>{splitDisputeError}</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : splitDisputeResult ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              {splitDisputeResult.accepted ? (
+                <>
+                  <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Confirmed</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>The Mandate has been notified and can now complete their registration.</p>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle size={40} style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Noted</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Tankbridge has been flagged to help sort this out with both sides.</p>
+                </>
+              )}
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : splitDisputeData?.co_broker_dispute_status !== "pending" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Already responded to</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>This link has already been used.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : (
+            <div className="gnt-card" style={{ padding: "32px 28px" }}>
+              <h2 style={{ fontSize: 22, marginBottom: 6 }}>Commission split needs your confirmation</h2>
+              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}>The Mandate you introduced for this {splitDisputeData.referred_type} ({splitDisputeData.referred_company_name || "-"}) confirmed they know the company, but said this split isn't what you actually agreed.</p>
+              {splitDisputeError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {splitDisputeError}</div>}
+              <div style={{ background: "var(--panel)", padding: "14px 16px", marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--steel)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Currently on file</div>
+                <div style={{ fontSize: 14 }}>
+                  {splitDisputeData.co_broker_share_mode === "fixed"
+                    ? <>You keep R {Number(splitDisputeData.co_broker_fixed_amount).toFixed(2)}/litre first, they get the rest</>
+                    : <>{Math.round((1 - splitDisputeData.co_broker_split_pct) * 100)}% you / {Math.round(splitDisputeData.co_broker_split_pct * 100)}% them</>}
+                </div>
+              </div>
+              <div style={{ background: "#fff", border: "1px solid var(--line)", padding: "14px 16px", marginBottom: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--steel)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>They're proposing</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  {splitDisputeData.co_broker_share_mode === "fixed"
+                    ? <>You keep R {Number(splitDisputeData.co_broker_disputed_amount).toFixed(2)}/litre first, they get the rest</>
+                    : <>{Math.round((1 - splitDisputeData.co_broker_disputed_split_pct) * 100)}% you / {Math.round(splitDisputeData.co_broker_disputed_split_pct * 100)}% them</>}
+                </div>
+                {splitDisputeData.co_broker_dispute_note && <div style={{ fontSize: 13, color: "var(--steel)", marginTop: 8 }}>"{splitDisputeData.co_broker_dispute_note}"</div>}
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="gnt-btn gnt-btn-amber" disabled={splitDisputeResolving} onClick={() => resolveSplitDispute(true)}>{splitDisputeResolving ? "Sending…" : "Agree to their split"}</button>
+                <button className="gnt-btn gnt-btn-ghost" disabled={splitDisputeResolving} onClick={() => resolveSplitDispute(false)}>That's not right either</button>
+              </div>
+            </div>
           )}
         </div>
       )}
