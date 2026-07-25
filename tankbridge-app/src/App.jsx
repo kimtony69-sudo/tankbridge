@@ -2776,7 +2776,7 @@ export default function App() {
             <h3>Curious exactly how it works for you?</h3>
             <p>See the full journey — from registering to getting paid — as a seller, buyer or broker.</p>
             <button
-              className="gnt-btn gnt-btn-ghost gnt-hiw-trigger"
+              className="gnt-btn gnt-btn-amber gnt-hiw-trigger"
               onClick={() => setHowItHelpsOpen(v => !v)}
               type="button"
             >
