@@ -1376,6 +1376,11 @@ export default function App() {
   }
 
   function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); setNcndaAgree(false); setNcndaScrolledEnd(false); setUseCustomNcnda(false); setCustomNcndaFile(null); goto("register"); }
+  function openHowItHelpsFromNav() {
+    goto("landing");
+    setHowItHelpsOpen(true);
+    setTimeout(() => { document.getElementById("how-it-helps")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
+  }
 
   // ---------- LISTINGS (dashboard) ----------
   function updateListingField(field, value) { setListingForm(f => ({ ...f, [field]: value })); }
@@ -2361,6 +2366,7 @@ export default function App() {
           </div>
           <nav className={`gnt-nav ${mobileMenuOpen ? "mobile-open" : ""}`}>
             <button className={view === "landing" ? "active" : ""} onClick={() => goto("landing")}>Home</button>
+            <button onClick={openHowItHelpsFromNav}>How it helps</button>
             <button className={view === "market" ? "active" : ""} onClick={() => goto("market")}>Market Board</button>
             <button className={view === "register" ? "active" : ""} onClick={resetRegFlow}>Register</button>
             <button className={view === "dashboard" ? "active" : ""} onClick={() => goto("dashboard")}>My Dashboard</button>
@@ -2766,11 +2772,11 @@ export default function App() {
             </div>
           </div>
 
-          <div className="gnt-hiw-trigger-wrap">
+          <div className="gnt-hiw-trigger-wrap" id="how-it-helps">
             <h3>Curious exactly how it works for you?</h3>
             <p>See the full journey — from registering to getting paid — as a seller, buyer or broker.</p>
             <button
-              className="gnt-btn gnt-btn-outline gnt-hiw-trigger"
+              className="gnt-btn gnt-btn-ghost gnt-hiw-trigger"
               onClick={() => setHowItHelpsOpen(v => !v)}
               type="button"
             >
