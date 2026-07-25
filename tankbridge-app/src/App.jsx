@@ -257,6 +257,7 @@ const STYLE = `
 }
 .gnt-field input:focus, .gnt-field select:focus, .gnt-field textarea:focus { outline:2px solid var(--amber); outline-offset:1px; border-color:var(--amber); }
 .gnt-field .hint { font-size:12px; color:var(--steel-soft); margin-top:5px; }
+.gnt-split-note { background:#fff; border-left:3px solid var(--amber); border-radius:0; padding:9px 12px; font-size:12.5px; color:var(--ink); margin-top:8px; }
 .gnt-type-toggle { display:flex; gap:0; border:1.5px solid var(--ink); margin-bottom:24px; width:fit-content; }
 .gnt-type-toggle button { padding:10px 22px; background:#fff; border:none; font-weight:600; font-size:14px; cursor:pointer; color:var(--ink); }
 .gnt-type-toggle button.active { background:var(--ink); color:var(--paper); }
@@ -3177,7 +3178,12 @@ export default function App() {
                             <button type="button" className={regForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReg("coBrokerShareMode", "fixed")}>Fixed amount (R/ℓ)</button>
                           </div>
                           {regForm.coBrokerShareMode === "percentage" ? (
-                            <input type="number" min="0.01" max="0.99" step="0.05" value={regForm.coBrokerSplitPct} onChange={e => updateReg("coBrokerSplitPct", e.target.value)} placeholder="0.50 = 50%" />
+                            <>
+                              <input type="number" min="0.01" max="0.99" step="0.05" value={regForm.coBrokerSplitPct} onChange={e => updateReg("coBrokerSplitPct", e.target.value)} placeholder="0.50 = 50%" />
+                              {regForm.coBrokerSplitPct !== "" && !isNaN(Number(regForm.coBrokerSplitPct)) && (
+                                <div className="gnt-split-note">You'll receive <strong>{Math.round(Number(regForm.coBrokerSplitPct) * 100)}%</strong> of the brokerage fee. The Mandate will receive the remaining <strong>{Math.round((1 - Number(regForm.coBrokerSplitPct)) * 100)}%</strong>.</div>
+                              )}
+                            </>
                           ) : (
                             <>
                               <input type="number" min="0" step="0.01" value={regForm.coBrokerFixedAmount} onChange={e => updateReg("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 0.05" />
@@ -3933,7 +3939,12 @@ export default function App() {
                             <button type="button" className={referralForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReferralField("coBrokerShareMode", "fixed")}>Fixed amount (R/ℓ)</button>
                           </div>
                           {referralForm.coBrokerShareMode === "percentage" ? (
-                            <input type="number" min="0.01" max="0.99" step="0.05" value={referralForm.coBrokerSplitPct} onChange={e => updateReferralField("coBrokerSplitPct", e.target.value)} placeholder="0.50 = 50%" />
+                            <>
+                              <input type="number" min="0.01" max="0.99" step="0.05" value={referralForm.coBrokerSplitPct} onChange={e => updateReferralField("coBrokerSplitPct", e.target.value)} placeholder="0.50 = 50%" />
+                              {referralForm.coBrokerSplitPct !== "" && !isNaN(Number(referralForm.coBrokerSplitPct)) && (
+                                <div className="gnt-split-note">You'll receive <strong>{Math.round(Number(referralForm.coBrokerSplitPct) * 100)}%</strong> of the brokerage fee. The Mandate will receive the remaining <strong>{Math.round((1 - Number(referralForm.coBrokerSplitPct)) * 100)}%</strong>.</div>
+                              )}
+                            </>
                           ) : (
                             <>
                               <input type="number" min="0" step="0.01" value={referralForm.coBrokerFixedAmount} onChange={e => updateReferralField("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 0.05" />
