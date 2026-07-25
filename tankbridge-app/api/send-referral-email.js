@@ -9,6 +9,8 @@
 // - "co_broker_claim": upstream broker/mandate relationship confirmation
 // - "admin_new_referral": tells admin a new referral needs review
 // - "rejected": tells the submitting broker/mandate their referral was rejected (with reason)
+// - "split_dispute": tells the originating broker a Mandate disputed the commission split
+// - "split_dispute_resolved": tells the Mandate whether the originating broker agreed or not
 
 async function sendResendEmail({ to, subject, html }) {
   const res = await fetch("https://api.resend.com/emails", {
@@ -53,7 +55,7 @@ export default async function handler(req, res) {
 
   const { type, referralId, reason } = req.body || {};
   if (!referralId) return res.status(400).json({ error: "Missing referralId" });
-  if (!["invite", "confirm", "co_broker_claim", "admin_new_referral", "rejected"].includes(type)) {
+  if (!["invite", "confirm", "co_broker_claim", "admin_new_referral", "rejected", "split_dispute", "split_dispute_resolved"].includes(type)) {
     return res.status(400).json({ error: "Invalid type" });
   }
 
@@ -179,7 +181,9 @@ export default async function handler(req, res) {
       if (!referral.co_broker_upstream_email) return res.status(400).json({ error: "No upstream broker email on file." });
 
       const claimUrl = `https://tankbridge.co.za/?co_broker_claim=1&token=${referral.co_broker_confirm_token}`;
-      const splitPct = Math.round(Number(referral.co_broker_split_pct) * 100);
+      const shareLine = referral.co_broker_share_mode === "fixed"
+        ? `<strong>${broker?.company_name || "The introducing broker"} keeps R ${Number(referral.co_broker_fixed_amount).toFixed(2)}/litre first, and you get whatever's left of the brokerage fee.</strong>`
+        : `<strong>${Math.round((1 - Number(referral.co_broker_split_pct)) * 100)}% to you, ${Math.round(Number(referral.co_broker_split_pct) * 100)}% to ${broker?.company_name || "the introducing broker"}</strong>.`;
 
       try {
         await sendResendEmail({
@@ -195,7 +199,7 @@ export default async function handler(req, res) {
             <p><strong>Terms:</strong> ${terms}</p>
             <p><strong>Location:</strong> ${referral.location}</p>
             ${referral.referred_type === "seller" && referral.proposed_commission_rate ? `<p><strong>Commission:</strong> R ${Number(referral.proposed_commission_rate).toFixed(2)} / litre</p>` : ""}
-            <p>If you confirm, you'll register this ${referral.referred_type} yourself with the real details, and you'll share the 30% Tankbridge broker commission: <strong>${100 - splitPct}% to you, ${splitPct}% to ${broker?.company_name || "the introducing broker"}</strong>.</p>
+            <p>If you confirm, you'll register this ${referral.referred_type} yourself with the real details. Of the Tankbridge brokerage fee on this deal: ${shareLine}</p>
             <p style="margin-top:20px;">
               <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">I know them — let's proceed</a>
             </p>
@@ -206,6 +210,66 @@ export default async function handler(req, res) {
       } catch (emailErr) {
         await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_email_status: "failed", co_broker_email_sent_at: new Date().toISOString(), co_broker_email_error: emailErr.message }, serviceKey, supabaseUrl);
         return res.status(500).json({ error: "Failed to send confirmation email", detail: emailErr.message });
+      }
+    }
+
+    if (type === "split_dispute") {
+      if (!broker?.email || broker.email === "-") return res.status(200).json({ ok: true, skipped: true });
+      const disputeUrl = `https://tankbridge.co.za/?split_dispute=1&token=${referral.co_broker_dispute_token}`;
+      const currentLine = referral.co_broker_share_mode === "fixed"
+        ? `You keep R ${Number(referral.co_broker_fixed_amount).toFixed(2)}/litre first, they get the rest`
+        : `${Math.round(Number(referral.co_broker_split_pct) * 100)}% to them, ${Math.round((1 - Number(referral.co_broker_split_pct)) * 100)}% to you`;
+      const proposedLine = referral.co_broker_share_mode === "fixed"
+        ? `They're proposing: you keep R ${Number(referral.co_broker_disputed_amount).toFixed(2)}/litre first, they get the rest`
+        : `They're proposing: ${Math.round(Number(referral.co_broker_disputed_split_pct) * 100)}% to them, ${Math.round((1 - Number(referral.co_broker_disputed_split_pct)) * 100)}% to you`;
+
+      try {
+        await sendResendEmail({
+          to: broker.email,
+          subject: `The Mandate you referred says the commission split isn't what you agreed`,
+          html: `
+            <h2>Commission split needs your confirmation</h2>
+            <p>The Mandate you introduced for the <strong>${referral.referred_type}</strong> (${referral.referred_company_name || "-"}) confirmed they know the company, but said this split isn't what you actually agreed:</p>
+            <p><strong>What's currently on file:</strong> ${currentLine}</p>
+            <p><strong>What they say:</strong> ${proposedLine}</p>
+            ${referral.co_broker_dispute_note ? `<p><strong>Their note:</strong> ${referral.co_broker_dispute_note}</p>` : ""}
+            <p style="margin-top:20px;">
+              <a href="${disputeUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">Review and respond</a>
+            </p>
+            <p style="font-size:12px;color:#888;margin-top:16px;">Their registration is on hold until you confirm or reject this.</p>
+          `,
+        });
+        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_email_status: "sent", co_broker_dispute_email_sent_at: new Date().toISOString(), co_broker_dispute_email_error: null }, serviceKey, supabaseUrl);
+      } catch (emailErr) {
+        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_email_status: "failed", co_broker_dispute_email_sent_at: new Date().toISOString(), co_broker_dispute_email_error: emailErr.message }, serviceKey, supabaseUrl);
+        return res.status(500).json({ error: "Failed to send dispute email", detail: emailErr.message });
+      }
+    }
+
+    if (type === "split_dispute_resolved") {
+      if (!referral.co_broker_upstream_email) return res.status(200).json({ ok: true, skipped: true });
+      const accepted = referral.co_broker_dispute_status === "agreed";
+      const claimUrl = `https://tankbridge.co.za/?co_broker_claim=1&token=${referral.co_broker_confirm_token}`;
+
+      try {
+        await sendResendEmail({
+          to: referral.co_broker_upstream_email,
+          subject: accepted ? "Your proposed commission split was agreed" : "Your proposed commission split wasn't agreed",
+          html: accepted ? `
+            <h2>Good news — they agreed</h2>
+            <p><strong>${broker?.company_name || "The introducing broker"}</strong> confirmed your proposed split. You can go ahead and complete your registration now.</p>
+            <p style="margin-top:20px;">
+              <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">Continue registration</a>
+            </p>
+          ` : `
+            <h2>They didn't agree with the proposed split</h2>
+            <p><strong>${broker?.company_name || "The introducing broker"}</strong> did not confirm your proposed split. This has been flagged to Tankbridge to help sort out — we'll be in touch.</p>
+          `,
+        });
+        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_resolved_email_status: "sent", co_broker_dispute_resolved_email_sent_at: new Date().toISOString(), co_broker_dispute_resolved_email_error: null }, serviceKey, supabaseUrl);
+      } catch (emailErr) {
+        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_resolved_email_status: "failed", co_broker_dispute_resolved_email_sent_at: new Date().toISOString(), co_broker_dispute_resolved_email_error: emailErr.message }, serviceKey, supabaseUrl);
+        return res.status(500).json({ error: "Failed to send resolution email", detail: emailErr.message });
       }
     }
 
