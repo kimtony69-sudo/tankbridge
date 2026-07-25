@@ -81,6 +81,21 @@ function fmtMoney(n) {
   if (isNaN(num)) return "-";
   return "R " + num.toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+// Commission-per-litre rates are stored in the database as Rand (e.g. 0.10) but
+// shown to users as cents (e.g. 10c/ℓ) since fractions of a Rand read awkwardly.
+function fmtCents(randPerLitre) {
+  const num = Number(randPerLitre);
+  if (isNaN(num)) return "-";
+  return Math.round(num * 100) + "c/ℓ";
+}
+function randToCentsField(randValue) {
+  if (randValue === "" || randValue === null || randValue === undefined || isNaN(Number(randValue))) return "";
+  return String(Math.round(Number(randValue) * 100));
+}
+function centsFieldToRand(centsValue) {
+  if (centsValue === "" || centsValue === null || centsValue === undefined || isNaN(Number(centsValue))) return null;
+  return Number(centsValue) / 100;
+}
 function fmtTerms(t) {
   if (!t) return "-";
   return Array.isArray(t) ? t.join(" / ") : t;
@@ -91,7 +106,7 @@ const EMPTY_REG = {
   password: "", confirmPassword: "", ownershipCapacity: "",
   product: PRODUCTS[0], tradeVolume: "", tradeLocation: LOCATIONS[0], tradeLocationOther: "", tradePrice: "", tradeTerms: [],
   // broker-only: the first referral they submit as part of registering
-  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "0.10",
+  referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed" };
@@ -99,7 +114,7 @@ const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
   product: PRODUCTS[0], volume: "", unitPrice: "", location: LOCATIONS[0], locationOther: "", terms: [], notes: "",
-  proposedCommissionRate: "0.10",
+  proposedCommissionRate: "10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
 };
 
@@ -775,7 +790,7 @@ export default function App() {
   const [resubmitSaving, setResubmitSaving] = useState(false);
   const [imfpaAgree, setImfpaAgree] = useState(false);
   const [imfpaName, setImfpaName] = useState("");
-  const [imfpaCommissionRate, setImfpaCommissionRate] = useState("0.10");
+  const [imfpaCommissionRate, setImfpaCommissionRate] = useState("10");
 
   const [marketFilter, setMarketFilter] = useState({ kind: "all", product: "all", terms: "all" });
   const [acceptTarget, setAcceptTarget] = useState(null);
@@ -906,7 +921,7 @@ export default function App() {
         unitPrice: String(data[0].unit_price || ""),
         location: data[0].location || "",
         terms: data[0].terms || [],
-        commissionRate: data[0].proposed_commission_rate ? String(data[0].proposed_commission_rate) : "0.10",
+        commissionRate: data[0].proposed_commission_rate ? randToCentsField(data[0].proposed_commission_rate) : "10",
       }));
       setCoBrokerClaimLoading(false);
     })();
@@ -943,7 +958,7 @@ export default function App() {
       p_location: f.location,
       p_terms: f.terms,
       p_notes: f.notes || null,
-      p_commission_rate: coBrokerClaimData.referred_type === "seller" ? Number(f.commissionRate) : null,
+      p_commission_rate: coBrokerClaimData.referred_type === "seller" ? centsFieldToRand(f.commissionRate) : null,
     });
     if (error) { setCoBrokerClaimSubmitting(false); setCoBrokerClaimError(error.message); return; }
     if (coBrokerClaimData.referred_type === "seller" && coBrokerClaimLicenseFile) {
@@ -964,7 +979,7 @@ export default function App() {
     const { error } = await supabase.rpc("submit_co_broker_split_dispute", {
       p_claim_token: coBrokerClaimParams.token,
       p_disputed_split_pct: isFixed ? null : Number(splitDisputePct) / 100,
-      p_disputed_amount: isFixed ? Number(splitDisputeAmount) : null,
+      p_disputed_amount: isFixed ? centsFieldToRand(splitDisputeAmount) : null,
       p_note: splitDisputeNote || null,
     });
     if (error) { setSplitDisputeSubmitting(false); setCoBrokerClaimError(error.message); return; }
@@ -1203,8 +1218,8 @@ export default function App() {
           return "Please enter the Mandate's name and a valid email.";
         }
         if (regForm.coBrokerShareMode === "fixed") {
-          const fixed = Number(regForm.coBrokerFixedAmount);
-          if (isNaN(fixed) || fixed <= 0) return "Please enter a valid fixed amount (R/litre).";
+          const fixed = centsFieldToRand(regForm.coBrokerFixedAmount);
+          if (isNaN(fixed) || fixed <= 0) return "Please enter a valid fixed amount (cents/litre).";
         } else {
           const split = Number(regForm.coBrokerSplitPct);
           if (isNaN(split) || split <= 0 || split >= 1) return "Split must be a share between 0 and 1 (e.g. 0.50 for 50%).";
@@ -1216,7 +1231,7 @@ export default function App() {
       if (!regForm.referredEmail || !/^\S+@\S+\.\S+$/.test(regForm.referredEmail)) return "A valid email for the referred company is required — Tankbridge will invite them to register directly.";
       if (regForm.referredType === "seller" && !regReferralLicenseFile) return "Please upload a copy of the seller's Wholesale License.";
       if (regForm.referredType === "seller") {
-        const rate = Number(regForm.proposedCommissionRate);
+        const rate = centsFieldToRand(regForm.proposedCommissionRate);
         if (isNaN(rate) || rate < 0.10 || rate > 0.99) return "Commission agreed with the seller must be between R0.10 and R0.99 per litre.";
       }
       if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
@@ -1298,7 +1313,7 @@ export default function App() {
         co_broker_upstream_email: regForm.upstreamBrokerEmail,
         co_broker_share_mode: regForm.coBrokerShareMode,
         co_broker_split_pct: regForm.coBrokerShareMode === "percentage" ? Number(regForm.coBrokerSplitPct) : null,
-        co_broker_fixed_amount: regForm.coBrokerShareMode === "fixed" ? Number(regForm.coBrokerFixedAmount) : null,
+        co_broker_fixed_amount: regForm.coBrokerShareMode === "fixed" ? centsFieldToRand(regForm.coBrokerFixedAmount) : null,
         agreement_accepted: true,
         agreement_accepted_by: ncndaName,
         agreement_accepted_at: new Date().toISOString(),
@@ -1318,7 +1333,7 @@ export default function App() {
         referred_cipc: regForm.referredType === "buyer" ? regForm.referredCipc : null,
         referred_dmre_license: null,
         referred_email: regForm.referredEmail,
-        proposed_commission_rate: regForm.referredType === "seller" ? Number(regForm.proposedCommissionRate) : null,
+        proposed_commission_rate: regForm.referredType === "seller" ? centsFieldToRand(regForm.proposedCommissionRate) : null,
         product: regForm.product,
         volume: Number(regForm.tradeVolume),
         unit_price: Number(regForm.tradePrice),
@@ -1675,8 +1690,8 @@ export default function App() {
   async function submitDashboardImfpa(e) {
     e.preventDefault();
     if (!imfpaAgree || imfpaName.trim().length < 3) { setListingError("Please accept the IMFPA and enter your full name."); return; }
-    const rate = Number(imfpaCommissionRate);
-    if (isNaN(rate) || rate < 0.10 || rate > 0.99) { setListingError("Commission must be between R0.10 and R0.99 per litre."); return; }
+    const rate = centsFieldToRand(imfpaCommissionRate);
+    if (rate === null || isNaN(rate) || rate < 0.10 || rate > 0.99) { setListingError("Commission must be between 10c and 99c per litre."); return; }
     setListingError("");
     const { error } = await supabase.rpc("sign_imfpa", { p_signed_by: imfpaName, p_commission_rate: rate });
     if (error) { setListingError(error.message); return; }
@@ -1685,9 +1700,9 @@ export default function App() {
     setShowImfpaForm(false);
     setImfpaAgree(false);
     setImfpaName("");
-    setImfpaCommissionRate("0.10");
+    setImfpaCommissionRate("10");
     setImfpaJustSigned(true);
-    showToast(`IMFPA signed at R${rate.toFixed(2)}/litre — buyer contact details on matched deals are now released.`);
+    showToast(`IMFPA signed at ${Math.round(rate * 100)}c/ℓ — buyer contact details on matched deals are now released.`);
   }
 
   // ---------- REFERRALS (broker) ----------
@@ -1704,8 +1719,8 @@ export default function App() {
         setReferralError("Please enter the Mandate's name and a valid email."); return;
       }
       if (f.coBrokerShareMode === "fixed") {
-        const fixed = Number(f.coBrokerFixedAmount);
-        if (isNaN(fixed) || fixed <= 0) { setReferralError("Please enter a valid fixed amount (R/litre)."); return; }
+        const fixed = centsFieldToRand(f.coBrokerFixedAmount);
+        if (isNaN(fixed) || fixed <= 0) { setReferralError("Please enter a valid fixed amount (cents/litre)."); return; }
       } else {
         const split = Number(f.coBrokerSplitPct);
         if (isNaN(split) || split <= 0 || split >= 1) { setReferralError("Split must be a share between 0 and 1 (e.g. 0.50 for 50%)."); return; }
@@ -1729,7 +1744,7 @@ export default function App() {
       setReferralError("Please upload a copy of the seller's Wholesale License."); return;
     }
     if (f.referredType === "seller") {
-      const rate = Number(f.proposedCommissionRate);
+      const rate = centsFieldToRand(f.proposedCommissionRate);
       if (isNaN(rate) || rate < 0.10 || rate > 0.99) { setReferralError("Commission agreed with the seller must be between R0.10 and R0.99 per litre."); return; }
     }
     if (Number(f.volume) < 40000) { setReferralError("Minimum tradable volume is 40,000 litres."); return; }
@@ -1758,7 +1773,7 @@ export default function App() {
         co_broker_upstream_email: f.upstreamBrokerEmail,
         co_broker_share_mode: f.coBrokerShareMode,
         co_broker_split_pct: f.coBrokerShareMode === "percentage" ? Number(f.coBrokerSplitPct) : null,
-        co_broker_fixed_amount: f.coBrokerShareMode === "fixed" ? Number(f.coBrokerFixedAmount) : null,
+        co_broker_fixed_amount: f.coBrokerShareMode === "fixed" ? centsFieldToRand(f.coBrokerFixedAmount) : null,
         agreement_accepted: true,
         agreement_accepted_by: referralName,
         agreement_accepted_at: new Date().toISOString(),
@@ -1786,7 +1801,7 @@ export default function App() {
       referred_contact_name: f.referredContactName || null,
       referred_phone: f.referredPhone || null,
       referred_email: f.referredEmail || null,
-      proposed_commission_rate: f.referredType === "seller" ? Number(f.proposedCommissionRate) : null,
+      proposed_commission_rate: f.referredType === "seller" ? centsFieldToRand(f.proposedCommissionRate) : null,
       product: f.product,
       volume: Number(f.volume),
       unit_price: Number(f.unitPrice),
@@ -1874,7 +1889,7 @@ export default function App() {
                 <div className="mono" style={{ fontWeight: 600 }}>{fmtMoney(o.current_price)}/ℓ</div>
               </div>
               {o.current_commission_rate != null && (
-                <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 6 }}>Commission on the table: <strong className="mono">{fmtMoney(o.current_commission_rate)}/ℓ</strong></div>
+                <div style={{ fontSize: 12, color: "var(--steel-soft)", marginTop: 6 }}>Commission on the table: <strong className="mono">{fmtCents(o.current_commission_rate)}</strong></div>
               )}
               {myTurn && (
                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
@@ -1885,7 +1900,7 @@ export default function App() {
                     {myRound < 2 && (
                       <>
                         <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 120 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
-                        <input type="number" min="0" step="0.01" placeholder="Commission (optional)" style={{ width: 150 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                        <input type="number" min="0" step="1" placeholder="Commission, cents (optional)" style={{ width: 175 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
                           <input type="number" min="0" max="70" step="1" placeholder="My share % (0-70)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         )}
@@ -1902,7 +1917,7 @@ export default function App() {
                     <p className="hint" style={{ marginTop: 6 }}>Both sides have a Mandate on this deal — you can each set your own share of the 70% broker pool, split however you agree (e.g. 70/0, 50/20), as long as the combined total doesn't exceed 70%. Leave blank to keep the current 35% default.</p>
                   )}
                   {isDelegate && offerCommissionInputs[counterKey] && Number(offerCommissionInputs[counterKey]) > 0 && (() => {
-                    const rate = Number(offerCommissionInputs[counterKey]);
+                    const rate = centsFieldToRand(offerCommissionInputs[counterKey]);
                     const vol = Number(o.listings?.volume || 0);
                     const total = rate * vol;
                     const otherActive = isBuyerSide ? !!o.seller_negotiator_id : !!o.buyer_negotiator_id;
@@ -1935,7 +1950,7 @@ export default function App() {
     const { data, error } = await supabase.rpc("respond_to_offer", {
       p_offer_id: offerId, p_action: action,
       p_price: priceValue ? Number(priceValue) : null,
-      p_commission_rate: commissionValue ? Number(commissionValue) : null,
+      p_commission_rate: commissionValue ? centsFieldToRand(commissionValue) : null,
       p_my_share_pct: sharePctValue !== undefined && sharePctValue !== "" ? Number(sharePctValue) / 100 : null,
     });
     setOfferActionBusy(null);
@@ -1977,7 +1992,7 @@ export default function App() {
     const { error } = await supabase.rpc("submit_counter_offer", {
       p_listing_id: counterTarget.id,
       p_price: price,
-      p_commission_rate: counterCommission ? Number(counterCommission) : null,
+      p_commission_rate: counterCommission ? centsFieldToRand(counterCommission) : null,
       p_represented_company_id: counterRepresented || null,
     });
     setCounterSubmitting(false);
@@ -2214,7 +2229,7 @@ export default function App() {
       volume: String(referral.volume || ""),
       location: referral.location || "",
       terms: referral.terms || [],
-      proposedCommissionRate: String(referral.proposed_commission_rate || "0.10"),
+      proposedCommissionRate: randToCentsField(referral.proposed_commission_rate) || "10",
     });
     setResubmitReferralError("");
     setResubmitReferralLicenseFile(null);
@@ -2236,7 +2251,7 @@ export default function App() {
       p_volume: Number(f.volume),
       p_location: f.location,
       p_terms: f.terms,
-      p_proposed_commission_rate: referral.referred_type === "seller" ? Number(f.proposedCommissionRate) : null,
+      p_proposed_commission_rate: referral.referred_type === "seller" ? centsFieldToRand(f.proposedCommissionRate) : null,
     });
     if (error) { setResubmitReferralBusy(false); setResubmitReferralError(error.message); return; }
 
@@ -2264,7 +2279,7 @@ export default function App() {
       volume: String(referral.volume || ""),
       location: referral.location || "",
       terms: referral.terms || [],
-      proposedCommissionRate: String(referral.proposed_commission_rate || "0.10"),
+      proposedCommissionRate: randToCentsField(referral.proposed_commission_rate) || "10",
     });
     setEditPendingReferralError("");
   }
@@ -2282,7 +2297,7 @@ export default function App() {
       p_volume: Number(f.volume),
       p_location: f.location,
       p_terms: f.terms,
-      p_proposed_commission_rate: Number(f.proposedCommissionRate),
+      p_proposed_commission_rate: centsFieldToRand(f.proposedCommissionRate),
     });
     if (error) { setEditPendingReferralBusy(false); setEditPendingReferralError(error.message); return; }
 
@@ -2502,7 +2517,7 @@ export default function App() {
                 <div><div className="dt">Asking price</div><div className="dd">{fmtMoney(referralConfirmData.unit_price)}/ℓ</div></div>
                 <div><div className="dt">Terms</div><div className="dd">{fmtTerms(referralConfirmData.terms)}</div></div>
                 <div><div className="dt">Location</div><div className="dd">{referralConfirmData.location}</div></div>
-                <div><div className="dt">Proposed commission</div><div className="dd">{fmtMoney(referralConfirmData.proposed_commission_rate || 0.10)}/ℓ</div></div>
+                <div><div className="dt">Proposed commission</div><div className="dd">{fmtCents(referralConfirmData.proposed_commission_rate || 0.10)}</div></div>
               </div>
               {referralConfirmError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {referralConfirmError}</div>}
               {!showReferralRejectForm ? (
@@ -2594,7 +2609,7 @@ export default function App() {
             <form onSubmit={submitCoBrokerClaim} className="gnt-card" style={{ padding: "32px 28px" }}>
               <h2 style={{ fontSize: 22, marginBottom: 6 }}>Confirm and register this {coBrokerClaimData.referred_type}</h2>
               <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 16 }}><strong>{coBrokerClaimData.originating_broker_name}</strong> introduced this — please correct any details below with what you actually know, since you're vouching for it. {coBrokerClaimData.co_broker_share_mode === "fixed"
-                ? <>Of the brokerage fee on this deal: <strong>{coBrokerClaimData.originating_broker_name} keeps R {Number(coBrokerClaimData.co_broker_fixed_amount).toFixed(2)}/litre first, and you get whatever's left.</strong></>
+                ? <>Of the brokerage fee on this deal: <strong>{coBrokerClaimData.originating_broker_name} keeps {Math.round(Number(coBrokerClaimData.co_broker_fixed_amount) * 100)}c/ℓ first, and you get whatever's left.</strong></>
                 : <>You'll split the brokerage fee <strong>{Math.round((1 - coBrokerClaimData.co_broker_split_pct) * 100)}% you / {Math.round(coBrokerClaimData.co_broker_split_pct * 100)}% {coBrokerClaimData.originating_broker_name}</strong>.</>
               }</p>
               {coBrokerClaimError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {coBrokerClaimError}</div>}
@@ -2609,7 +2624,7 @@ export default function App() {
               )}
               <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={coBrokerClaimForm.email} onChange={e => setCoBrokerClaimForm(f => ({ ...f, email: e.target.value }))} /></div>
               {coBrokerClaimData.referred_type === "seller" && (
-                <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={coBrokerClaimForm.commissionRate} onChange={e => setCoBrokerClaimForm(f => ({ ...f, commissionRate: e.target.value }))} /></div>
+                <div className="gnt-field"><label>Commission agreed with seller (cents / litre)</label><input type="number" min="10" max="99" step="1" value={coBrokerClaimForm.commissionRate} onChange={e => setCoBrokerClaimForm(f => ({ ...f, commissionRate: e.target.value }))} /></div>
               )}
               <div className="gnt-grid2">
                 <div className="gnt-field"><label>Contact person (optional)</label><input value={coBrokerClaimForm.contactName} onChange={e => setCoBrokerClaimForm(f => ({ ...f, contactName: e.target.value }))} /></div>
@@ -2640,7 +2655,7 @@ export default function App() {
                     <>
                       <p style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 12 }}>Tell us what you actually agreed with {coBrokerClaimData.originating_broker_name}. We'll send it to them to confirm before this registration goes ahead.</p>
                       {coBrokerClaimData.co_broker_share_mode === "fixed" ? (
-                        <div className="gnt-field"><label>What you agreed you'd keep first (R / litre)</label><input type="number" step="0.01" min="0" value={splitDisputeAmount} onChange={e => setSplitDisputeAmount(e.target.value)} /></div>
+                        <div className="gnt-field"><label>What you agreed you'd keep first (cents / litre)</label><input type="number" step="1" min="0" value={splitDisputeAmount} onChange={e => setSplitDisputeAmount(e.target.value)} /></div>
                       ) : (
                         <div className="gnt-field"><label>The split you agreed on (your %)</label><input type="number" min="0" max="100" value={splitDisputePct} onChange={e => setSplitDisputePct(e.target.value)} /></div>
                       )}
@@ -2700,7 +2715,7 @@ export default function App() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--steel)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Currently on file</div>
                 <div style={{ fontSize: 14 }}>
                   {splitDisputeData.co_broker_share_mode === "fixed"
-                    ? <>You keep R {Number(splitDisputeData.co_broker_fixed_amount).toFixed(2)}/litre first, they get the rest</>
+                    ? <>You keep {Math.round(Number(splitDisputeData.co_broker_fixed_amount) * 100)}c/ℓ first, they get the rest</>
                     : <>{Math.round((1 - splitDisputeData.co_broker_split_pct) * 100)}% you / {Math.round(splitDisputeData.co_broker_split_pct * 100)}% them</>}
                 </div>
               </div>
@@ -2708,7 +2723,7 @@ export default function App() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--steel)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>They're proposing</div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>
                   {splitDisputeData.co_broker_share_mode === "fixed"
-                    ? <>You keep R {Number(splitDisputeData.co_broker_disputed_amount).toFixed(2)}/litre first, they get the rest</>
+                    ? <>You keep {Math.round(Number(splitDisputeData.co_broker_disputed_amount) * 100)}c/ℓ first, they get the rest</>
                     : <>{Math.round((1 - splitDisputeData.co_broker_disputed_split_pct) * 100)}% you / {Math.round(splitDisputeData.co_broker_disputed_split_pct * 100)}% them</>}
                 </div>
                 {splitDisputeData.co_broker_dispute_note && <div style={{ fontSize: 13, color: "var(--steel)", marginTop: 8 }}>"{splitDisputeData.co_broker_dispute_note}"</div>}
@@ -3175,7 +3190,7 @@ export default function App() {
                         <div className="gnt-field"><label>Your share of the broker commission (rate varies by deal — split with the Mandate)</label>
                           <div className="gnt-type-toggle" style={{ marginBottom: 10 }}>
                             <button type="button" className={regForm.coBrokerShareMode === "percentage" ? "active" : ""} onClick={() => updateReg("coBrokerShareMode", "percentage")}>Percentage split</button>
-                            <button type="button" className={regForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReg("coBrokerShareMode", "fixed")}>Fixed amount (R/ℓ)</button>
+                            <button type="button" className={regForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReg("coBrokerShareMode", "fixed")}>Fixed amount (cents/ℓ)</button>
                           </div>
                           {regForm.coBrokerShareMode === "percentage" ? (
                             <>
@@ -3186,8 +3201,8 @@ export default function App() {
                             </>
                           ) : (
                             <>
-                              <input type="number" min="0" step="0.01" value={regForm.coBrokerFixedAmount} onChange={e => updateReg("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 0.05" />
-                              <div className="hint">You're guaranteed this much per litre first; the Mandate gets whatever's left of the commission.</div>
+                              <input type="number" min="0" step="1" value={regForm.coBrokerFixedAmount} onChange={e => updateReg("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 5" />
+                              <div className="hint">This is what you want to receive (or already agreed with the Mandate) — they get whatever's left of the commission.</div>
                             </>
                           )}
                         </div>
@@ -3207,7 +3222,7 @@ export default function App() {
                       <div className="gnt-field"><label>Their email (required — Tankbridge invites them to register)</label><input type="email" value={regForm.referredEmail} onChange={e => updateReg("referredEmail", e.target.value)} placeholder="them@company.co.za" /></div>
                     )}
                     {regForm.hasDirectRelationship && regForm.referredType === "seller" && (
-                      <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={regForm.proposedCommissionRate} onChange={e => updateReg("proposedCommissionRate", e.target.value)} />
+                      <div className="gnt-field"><label>Commission agreed with seller (cents / litre)</label><input type="number" min="10" max="99" step="1" value={regForm.proposedCommissionRate} onChange={e => updateReg("proposedCommissionRate", e.target.value)} />
                         <div className="hint">This should already be agreed with the seller directly — it's included in the confirmation email they approve before the listing goes live.</div>
                       </div>
                     )}
@@ -3850,8 +3865,8 @@ export default function App() {
                         <div className="gnt-card">
                           <h3 style={{ fontSize: 20, marginBottom: 10 }}>IMFPA — Irrevocable Master Fee Protection Agreement</h3>
                           <div className="gnt-field" style={{ maxWidth: 280 }}>
-                            <label>Commission (R / litre)</label>
-                            <input type="number" min="0.10" max="0.99" step="0.01" value={imfpaCommissionRate} onChange={e => setImfpaCommissionRate(e.target.value)} />
+                            <label>Commission (cents / litre)</label>
+                            <input type="number" min="10" max="99" step="1" value={imfpaCommissionRate} onChange={e => setImfpaCommissionRate(e.target.value)} />
                             <div className="hint">Default R0.10/ℓ — you can set any rate between R0.10 and R0.99/ℓ.</div>
                           </div>
                           <div className="gnt-doc-box">
@@ -3859,7 +3874,7 @@ export default function App() {
                             <p>This Irrevocable Master Fee Protection Agreement ("Agreement") is entered into between <strong>{myCompany.company_name}</strong> ("Seller") and Tankbridge, acting as intermediary/broker ("Intermediary"), in respect of all bulk diesel transactions matched via the Tankbridge Market Board.</p>
 
                             <h4>2. Commission</h4>
-                            <p>Seller irrevocably agrees to pay Intermediary a brokerage commission of <strong>R{(Number(imfpaCommissionRate) || 0).toFixed(2)} per litre</strong> on the completed and paid volume of any transaction concluded with a buyer introduced via Tankbridge. This rate applies to all deals matched under this Agreement unless a different rate is confirmed in writing between Seller and Tankbridge admin prior to release of buyer contact details on a specific deal.</p>
+                            <p>Seller irrevocably agrees to pay Intermediary a brokerage commission of <strong>{Number(imfpaCommissionRate) || 0} cents per litre</strong> on the completed and paid volume of any transaction concluded with a buyer introduced via Tankbridge. This rate applies to all deals matched under this Agreement unless a different rate is confirmed in writing between Seller and Tankbridge admin prior to release of buyer contact details on a specific deal.</p>
 
                             <h4>3. Invoicing and payment terms</h4>
                             <p>Upon confirmation that a matched deal has been completed, Tankbridge will issue a commission invoice to Seller for the agreed rate multiplied by the completed volume. Seller agrees to settle this invoice within 7 days of issue. Amounts unpaid after this period accrue interest at 2% per month (or part thereof) until paid in full.</p>
@@ -3936,7 +3951,7 @@ export default function App() {
                         <div className="gnt-field"><label>Your share of the broker commission (rate varies by deal — split with the Mandate)</label>
                           <div className="gnt-type-toggle" style={{ marginBottom: 10 }}>
                             <button type="button" className={referralForm.coBrokerShareMode === "percentage" ? "active" : ""} onClick={() => updateReferralField("coBrokerShareMode", "percentage")}>Percentage split</button>
-                            <button type="button" className={referralForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReferralField("coBrokerShareMode", "fixed")}>Fixed amount (R/ℓ)</button>
+                            <button type="button" className={referralForm.coBrokerShareMode === "fixed" ? "active" : ""} onClick={() => updateReferralField("coBrokerShareMode", "fixed")}>Fixed amount (cents/ℓ)</button>
                           </div>
                           {referralForm.coBrokerShareMode === "percentage" ? (
                             <>
@@ -3947,8 +3962,8 @@ export default function App() {
                             </>
                           ) : (
                             <>
-                              <input type="number" min="0" step="0.01" value={referralForm.coBrokerFixedAmount} onChange={e => updateReferralField("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 0.05" />
-                              <div className="hint">You're guaranteed this much per litre first; the Mandate gets whatever's left of the commission.</div>
+                              <input type="number" min="0" step="1" value={referralForm.coBrokerFixedAmount} onChange={e => updateReferralField("coBrokerFixedAmount", e.target.value)} placeholder="e.g. 5" />
+                              <div className="hint">This is what you want to receive (or already agreed with the Mandate) — they get whatever's left of the commission.</div>
                             </>
                           )}
                         </div>
@@ -3965,7 +3980,7 @@ export default function App() {
                       </div>
                     ))}
                     {referralForm.hasDirectRelationship && referralForm.referredType === "seller" && (
-                      <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={referralForm.proposedCommissionRate} onChange={e => updateReferralField("proposedCommissionRate", e.target.value)} />
+                      <div className="gnt-field"><label>Commission agreed with seller (cents / litre)</label><input type="number" min="10" max="99" step="1" value={referralForm.proposedCommissionRate} onChange={e => updateReferralField("proposedCommissionRate", e.target.value)} />
                         <div className="hint">This should already be agreed with the seller directly — it's included in the confirmation email they approve before the listing goes live.</div>
                       </div>
                     )}
@@ -4056,7 +4071,7 @@ export default function App() {
                                     <div className="gnt-field"><label>Volume (litres)</label><input type="number" min="40000" value={editPendingReferralForm.volume} onChange={e => setEditPendingReferralForm(f => ({ ...f, volume: e.target.value }))} /></div>
                                     <div className="gnt-field"><label>Asking price (R / litre)</label><input type="number" min="0" step="0.01" value={editPendingReferralForm.unitPrice} onChange={e => setEditPendingReferralForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
                                   </div>
-                                  <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={editPendingReferralForm.proposedCommissionRate} onChange={e => setEditPendingReferralForm(f => ({ ...f, proposedCommissionRate: e.target.value }))} /></div>
+                                  <div className="gnt-field"><label>Commission agreed with seller (cents / litre)</label><input type="number" min="10" max="99" step="1" value={editPendingReferralForm.proposedCommissionRate} onChange={e => setEditPendingReferralForm(f => ({ ...f, proposedCommissionRate: e.target.value }))} /></div>
                                   <div className="gnt-field"><label>Location</label><input value={editPendingReferralForm.location} onChange={e => setEditPendingReferralForm(f => ({ ...f, location: e.target.value }))} /></div>
                                   <div className="gnt-field"><label>Terms</label>
                                     <TermsCheckboxGroup value={editPendingReferralForm.terms} onChange={v => setEditPendingReferralForm(f => ({ ...f, terms: v }))} />
@@ -4123,7 +4138,7 @@ export default function App() {
                             <div className="gnt-field"><label>Price (R / litre)</label><input type="number" min="0" step="0.01" value={resubmitReferralForm.unitPrice} onChange={e => setResubmitReferralForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
                           </div>
                           {r.referred_type === "seller" && (
-                            <div className="gnt-field"><label>Commission agreed with seller (R / litre)</label><input type="number" min="0.10" max="0.99" step="0.01" value={resubmitReferralForm.proposedCommissionRate} onChange={e => setResubmitReferralForm(f => ({ ...f, proposedCommissionRate: e.target.value }))} /></div>
+                            <div className="gnt-field"><label>Commission agreed with seller (cents / litre)</label><input type="number" min="10" max="99" step="1" value={resubmitReferralForm.proposedCommissionRate} onChange={e => setResubmitReferralForm(f => ({ ...f, proposedCommissionRate: e.target.value }))} /></div>
                           )}
                           <div className="gnt-field"><label>Location</label><input value={resubmitReferralForm.location} onChange={e => setResubmitReferralForm(f => ({ ...f, location: e.target.value }))} /></div>
                           <div className="gnt-field"><label>Terms</label>
@@ -4378,7 +4393,7 @@ export default function App() {
                                   </div>
                                   {suggested != null && !d.platform_commission_amount && (
                                     <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" style={{ marginTop: 6, fontSize: 11 }} onClick={() => updateCommissionInput(d.id, suggested.toFixed(2))}>
-                                      Suggested: {fmtMoney(suggested)} (R{Number(sellerCo.imfpa_commission_rate).toFixed(2)}/ℓ × {Number(d.volume).toLocaleString()}ℓ)
+                                      Suggested: {fmtMoney(suggested)} ({fmtCents(sellerCo.imfpa_commission_rate)} × {Number(d.volume).toLocaleString()}ℓ)
                                     </button>
                                   )}
                                 </>
@@ -4822,7 +4837,7 @@ export default function App() {
                 )}
                 {counterError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {counterError}</div>}
                 <div className="gnt-field"><label>Your counter price (R / litre)</label><input type="number" min="0" step="0.01" value={counterPrice} onChange={e => setCounterPrice(e.target.value)} placeholder="20.40" /></div>
-                <div className="gnt-field"><label>Commission (optional — only relevant if you're representing someone as their Mandate)</label><input type="number" min="0" step="0.01" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                <div className="gnt-field"><label>Commission, cents/litre (optional — only relevant if you're representing someone as their Mandate)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
                 <p className="hint" style={{ marginBottom: 12 }}>The other party can accept, counter back, or decline (up to 2 rounds each). Track this from "My negotiations" on your Dashboard.</p>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="gnt-btn gnt-btn-amber" disabled={counterSubmitting} onClick={submitCounterOffer}>{counterSubmitting ? "Sending…" : "Send counter-offer"}</button>
