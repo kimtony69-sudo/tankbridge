@@ -1,11 +1,36 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Truck, ShieldCheck, Clock, CheckCircle2, XCircle, FileSignature,
-  ChevronRight, LogIn, Search, Plus, MapPin, Building2,
+  ChevronRight, ChevronDown, ChevronUp, LogIn, Search, Plus, MapPin, Building2,
   BadgeCheck, AlertTriangle, ArrowLeft, Mail, Phone, Lock, LogOut, Menu, X, Handshake
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
+
+const HOW_IT_HELPS = {
+  seller: [
+    { num: "01", title: "Register & get verified", body: "Submit your company details, CIPC number and DMRE wholesale license. Sign the NCNDA once, upfront.", benefit: "Your buyers are pre-vetted too — no wasted time chasing time-wasters or fake entities." },
+    { num: "02", title: "List anonymously", body: "Post your product, volume and price. Your company identity stays hidden until a buyer accepts your terms.", benefit: "No exposure to competitors or middlemen fishing for your allocation." },
+    { num: "03", title: "Field & negotiate offers", body: "Buyers (or their mandates) submit offers. You counter on price, terms and BOL conditions — up to 2 rounds.", benefit: "You set the final price. Tankbridge never marks it up or takes a cut of it." },
+    { num: "04", title: "Deal closes, funds move directly", body: "Once both sides accept, an independent third-party escrow pays each party directly and simultaneously.", benefit: "You get paid on your terms — your funds never pass through Tankbridge." },
+    { num: "05", title: "Repeat business stays protected", body: "Commission and referral relationships on your deals are tracked automatically for 24 months.", benefit: "Even on repeat trades, existing broker relationships are honoured — nothing to re-negotiate." },
+  ],
+  buyer: [
+    { num: "01", title: "Register & get verified", body: "Submit your CIPC registration and company details. Sign the NCNDA once, upfront.", benefit: "Every seller you meet on the board is already CIPC- and DMRE-screened — no ghost allocations." },
+    { num: "02", title: "Browse the Market Board", body: "See live listings by product, volume, location and terms (COC, COD, ITT, TTO) — or post your own requirement.", benefit: "Real, current offers only — not a recycled broker list." },
+    { num: "03", title: "Accept or counter", body: "Accept a listed price directly, or submit a counter on price and terms — up to 2 rounds of negotiation.", benefit: "You negotiate direct with the seller, with no broker inflating the price in the middle." },
+    { num: "04", title: "Deal locked, escrow handles payment", body: "Once agreed, an independent third-party escrow pays the seller directly, exactly per the accepted terms.", benefit: "Your funds only move on your terms — Tankbridge never touches or holds them." },
+    { num: "05", title: "Trade again, faster", body: "Your verified status and counterparty history stay on file for next time.", benefit: "Every following deal is faster — no repeating due diligence from scratch." },
+  ],
+  broker: [
+    { num: "01", title: "Register & get approved", body: "Sign up as a broker or mandate holder. Tankbridge admin reviews and approves you once.", benefit: "One-time approval, then refer as many deals as you can find." },
+    { num: "02", title: "Introduce a buyer or seller", body: "Know a company directly? Enter what you have. Don't, but know who does? Hand off to their actual mandate.", benefit: "Your introduction is timestamped and logged before either side ever sees a name — your claim is protected from day one." },
+    { num: "03", title: "Negotiate on their behalf", body: "If authorised as a mandate, counter price and commission split in real time, with a live payout preview.", benefit: "You can actively work the deal, not just wait on the sidelines for a yes." },
+    { num: "04", title: "Deal closes, you're paid directly", body: "Your commission share (up to 70% of the total) pays out through an independent third-party escrow, straight to you.", benefit: "No chasing payment through Tankbridge or the other side's broker — escrow pays everyone at once." },
+    { num: "05", title: "Covered for 24 months", body: "Every relationship you introduce is automatically tracked for 24 months, even across repeat deals.", benefit: "If they trade again without a new referral, your commission still applies automatically." },
+  ],
+};
+const HOW_IT_HELPS_LABELS = { seller: "I'm a Seller", buyer: "I'm a Buyer", broker: "I'm a Broker" };
 
 const PRODUCTS = ["Diesel 50ppm", "Diesel 10ppm (ULSD)", "Illuminating Paraffin", "Petrol ULP93", "Petrol ULP95", "Slop", "HFO"];
 const LOCATIONS = ["Durban", "Lesedi", "Secunda", "Sasolburg", "Johannesburg", "Cape Town", "Richards Bay", "Other"];
@@ -192,6 +217,31 @@ const STYLE = `
 .gnt-section-head { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:28px; flex-wrap:wrap; gap:12px; }
 .gnt-section-head h2 { font-size:34px; }
 .gnt-section-head p { color:var(--steel); font-size:14px; max-width:520px; }
+
+/* HOW IT HELPS ME */
+.gnt-hiw-trigger-wrap { text-align:center; padding:36px 20px; border-bottom:1px solid var(--line); }
+.gnt-hiw-trigger-wrap h3 { font-size:22px; margin-bottom:6px; }
+.gnt-hiw-trigger-wrap p { color:var(--steel); font-size:14px; margin-bottom:18px; }
+.gnt-hiw-trigger { display:inline-flex; align-items:center; gap:8px; }
+.gnt-hiw-panel { background:var(--panel); border-bottom:1px solid var(--line); padding:36px 20px 44px; margin:0 -20px; animation:gnt-hiw-drop 0.25s ease; }
+@keyframes gnt-hiw-drop { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+.gnt-hiw-inner { max-width:1000px; margin:0 auto; }
+.gnt-hiw-tabs { display:flex; gap:0; border:1.5px solid var(--ink); width:fit-content; margin:0 auto 8px; }
+.gnt-hiw-tabs button { padding:10px 22px; background:#fff; border:none; font-weight:600; font-size:14px; cursor:pointer; color:var(--ink); }
+.gnt-hiw-tabs button.active { background:var(--ink); color:var(--paper); }
+.gnt-hiw-flow { display:flex; flex-direction:column; gap:0; margin-top:28px; }
+.gnt-hiw-row { display:grid; grid-template-columns:60px 1fr; gap:18px; padding:20px 0; border-top:1px solid var(--line); }
+.gnt-hiw-row:last-child { padding-bottom:0; }
+.gnt-hiw-num { font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--amber-dark); letter-spacing:0.05em; padding-top:2px; }
+.gnt-hiw-row h4 { font-size:17px; margin:0 0 6px; }
+.gnt-hiw-row .gnt-hiw-body { font-size:13.5px; color:var(--steel); line-height:1.55; margin:0 0 8px; }
+.gnt-hiw-benefit { display:flex; gap:8px; align-items:flex-start; font-size:13.5px; color:#3f6b52; font-weight:600; line-height:1.5; }
+.gnt-hiw-benefit svg { flex-shrink:0; margin-top:2px; }
+.gnt-hiw-cta { text-align:center; margin-top:32px; padding-top:28px; border-top:1px solid var(--line); }
+.gnt-hiw-cta p { color:var(--steel); font-size:13.5px; margin-bottom:14px; }
+@media (max-width:640px) {
+  .gnt-hiw-row { grid-template-columns:1fr; gap:4px; }
+}
 
 /* CARDS */
 .gnt-card { background:var(--panel); border:1px solid var(--line); padding:22px; position:relative; }
@@ -623,6 +673,8 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [toast, setToast] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [howItHelpsOpen, setHowItHelpsOpen] = useState(false);
+  const [howItHelpsRole, setHowItHelpsRole] = useState("seller");
 
   const [boardListings, setBoardListings] = useState([]);
   const [publicBlacklist, setPublicBlacklist] = useState([]);
@@ -1759,7 +1811,7 @@ export default function App() {
                         <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 120 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         <input type="number" min="0" step="0.01" placeholder="Commission (optional)" style={{ width: 150 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
-                          <input type="number" min="0" max="35" step="1" placeholder="My share % (0-35)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                          <input type="number" min="0" max="70" step="1" placeholder="My share % (0-70)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         )}
                         <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey], offerShareInputs[counterKey])}>
                           {offerActionBusy === o.id + "counter" ? "Sending…" : "Counter"}
@@ -1771,7 +1823,7 @@ export default function App() {
                     </button>
                   </div>
                   {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
-                    <p className="hint" style={{ marginTop: 6 }}>Both sides have a Mandate on this deal — you can each set your own share of the 70% broker pool (0–35% each, combined max 70%). Leave blank to keep the current 35% default.</p>
+                    <p className="hint" style={{ marginTop: 6 }}>Both sides have a Mandate on this deal — you can each set your own share of the 70% broker pool, split however you agree (e.g. 70/0, 50/20), as long as the combined total doesn't exceed 70%. Leave blank to keep the current 35% default.</p>
                   )}
                   {isDelegate && offerCommissionInputs[counterKey] && Number(offerCommissionInputs[counterKey]) > 0 && (() => {
                     const rate = Number(offerCommissionInputs[counterKey]);
@@ -2713,6 +2765,54 @@ export default function App() {
               <p>Once approved, buyers and sellers list and browse each other's offers directly — every deal routed through Tankbridge.</p>
             </div>
           </div>
+
+          <div className="gnt-hiw-trigger-wrap">
+            <h3>Curious exactly how it works for you?</h3>
+            <p>See the full journey — from registering to getting paid — as a seller, buyer or broker.</p>
+            <button
+              className="gnt-btn gnt-btn-outline gnt-hiw-trigger"
+              onClick={() => setHowItHelpsOpen(v => !v)}
+              type="button"
+            >
+              How it helps my business
+              {howItHelpsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          </div>
+
+          {howItHelpsOpen && (
+            <div className="gnt-hiw-panel">
+              <div className="gnt-hiw-inner">
+                <div className="gnt-hiw-tabs">
+                  {["seller", "buyer", "broker"].map(role => (
+                    <button
+                      key={role}
+                      className={howItHelpsRole === role ? "active" : ""}
+                      onClick={() => setHowItHelpsRole(role)}
+                      type="button"
+                    >
+                      {HOW_IT_HELPS_LABELS[role]}
+                    </button>
+                  ))}
+                </div>
+                <div className="gnt-hiw-flow">
+                  {HOW_IT_HELPS[howItHelpsRole].map(step => (
+                    <div className="gnt-hiw-row" key={step.num}>
+                      <div className="gnt-hiw-num">{step.num}</div>
+                      <div>
+                        <h4>{step.title}</h4>
+                        <p className="gnt-hiw-body">{step.body}</p>
+                        <div className="gnt-hiw-benefit"><CheckCircle2 size={15} /> {step.benefit}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="gnt-hiw-cta">
+                  <p>Ready to see it in action?</p>
+                  <button className="gnt-btn gnt-btn-amber" onClick={resetRegFlow}>Register your company <ChevronRight size={16} /></button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <section className="gnt-section">
             <div className="gnt-section-head">
