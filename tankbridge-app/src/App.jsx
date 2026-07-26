@@ -798,6 +798,9 @@ export default function App() {
   const [offerPrice, setOfferPrice] = useState("");
   const [offerError, setOfferError] = useState("");
   const [offerSubmitting, setOfferSubmitting] = useState(false);
+  const [offerRepresented, setOfferRepresented] = useState("");
+  const [offerCommission, setOfferCommission] = useState("");
+  const [myRepresentedSellerCompanies, setMyRepresentedSellerCompanies] = useState([]);
   const [myOffers, setMyOffers] = useState([]);
   const [offerCounterInputs, setOfferCounterInputs] = useState({});
   const [offerCommissionInputs, setOfferCommissionInputs] = useState({});
@@ -1843,10 +1846,16 @@ export default function App() {
     .filter(l => marketFilter.product === "all" || l.product === marketFilter.product)
     .filter(l => marketFilter.terms === "all" || (Array.isArray(l.terms) ? l.terms.includes(marketFilter.terms) : l.terms === marketFilter.terms));
 
-  function openSubmitOffer(listing) {
+  async function openSubmitOffer(listing) {
     setOfferTarget(listing);
     setOfferPrice("");
     setOfferError("");
+    setOfferRepresented("");
+    setOfferCommission("");
+    if (session) {
+      const { data } = await supabase.rpc("get_my_represented_companies");
+      setMyRepresentedSellerCompanies((data || []).filter(c => c.type === "seller"));
+    }
   }
 
   async function submitSellerOffer() {
@@ -1854,7 +1863,12 @@ export default function App() {
     if (!price || price <= 0) { setOfferError("Please enter a valid price."); return; }
     setOfferSubmitting(true);
     setOfferError("");
-    const { data, error } = await supabase.rpc("submit_seller_offer", { p_listing_id: offerTarget.id, p_price: price });
+    const { data, error } = await supabase.rpc("submit_seller_offer", {
+      p_listing_id: offerTarget.id,
+      p_price: price,
+      p_commission_rate: offerRepresented && offerCommission ? centsFieldToRand(offerCommission) : null,
+      p_represented_company_id: offerRepresented || null,
+    });
     setOfferSubmitting(false);
     if (error) { setOfferError(error.message); return; }
     setOfferTarget(null);
@@ -4870,10 +4884,10 @@ export default function App() {
                   onRegisterClick={() => { setOfferTarget(null); resetRegFlow(); }}
                 />
               </>
-            ) : myCompany?.type !== "seller" ? (
+            ) : myCompany?.type !== "seller" && myRepresentedSellerCompanies.length === 0 ? (
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sellers only</h3>
-                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Only an approved seller account can submit an offer on this listing. {myCompany ? "Your account is registered as a " + myCompany.type + "." : ""}</p>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Only an approved seller account (or their authorised Mandate) can submit an offer on this listing. {myCompany ? "Your account is registered as a " + myCompany.type + ", and you don't yet represent any seller on Tankbridge." : ""} Referred a seller before? Use "Refer another company" from your Dashboard first, then come back.</p>
                 <button className="gnt-btn gnt-btn-ghost" onClick={() => setOfferTarget(null)}>Close</button>
               </>
             ) : (
@@ -4888,11 +4902,32 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                {myRepresentedSellerCompanies.length > 0 && myCompany?.type === "seller" && (
+                  <div className="gnt-field">
+                    <label>Acting as (optional — leave blank to offer as yourself)</label>
+                    <select value={offerRepresented} onChange={e => { setOfferRepresented(e.target.value); if (!e.target.value) setOfferCommission(""); }}>
+                      <option value="">Myself ({myCompany?.company_name})</option>
+                      {myRepresentedSellerCompanies.map(c => <option key={c.id} value={c.id}>On behalf of {c.company_name}</option>)}
+                    </select>
+                  </div>
+                )}
+                {myRepresentedSellerCompanies.length > 0 && myCompany?.type !== "seller" && (
+                  <div className="gnt-field">
+                    <label>Offering on behalf of</label>
+                    <select value={offerRepresented} onChange={e => setOfferRepresented(e.target.value)}>
+                      <option value="">Select a seller you represent…</option>
+                      {myRepresentedSellerCompanies.map(c => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+                    </select>
+                  </div>
+                )}
                 {offerError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {offerError}</div>}
                 <div className="gnt-field"><label>Your offer (R / litre)</label><input type="number" min="0" step="0.01" value={offerPrice} onChange={e => setOfferPrice(e.target.value)} placeholder="21.45" /></div>
+                {offerRepresented && (
+                  <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={offerCommission} onChange={e => setOfferCommission(e.target.value)} /></div>
+                )}
                 <p className="hint" style={{ marginBottom: 12 }}>The buyer can accept or counter (up to 2 rounds each). If not accepted after that, the negotiation falls through.</p>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button className="gnt-btn gnt-btn-amber" disabled={offerSubmitting} onClick={submitSellerOffer}>{offerSubmitting ? "Submitting…" : "Submit offer"}</button>
+                  <button className="gnt-btn gnt-btn-amber" disabled={offerSubmitting || (myCompany?.type !== "seller" && !offerRepresented)} onClick={submitSellerOffer}>{offerSubmitting ? "Submitting…" : "Submit offer"}</button>
                   <button className="gnt-btn gnt-btn-ghost" onClick={() => setOfferTarget(null)}>Cancel</button>
                 </div>
               </>
