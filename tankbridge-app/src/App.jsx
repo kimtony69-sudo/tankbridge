@@ -1900,7 +1900,9 @@ export default function App() {
                     {myRound < 2 && (
                       <>
                         <input type="number" min="0" step="0.01" placeholder="Counter price" style={{ width: 120 }} value={offerCounterInputs[counterKey] || ""} onChange={e => setOfferCounterInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
-                        <input type="number" min="0" step="1" placeholder="Commission, cents (optional)" style={{ width: 175 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                        {isDelegate && (
+                          <input type="number" min="0" step="1" placeholder="Commission, cents (optional)" style={{ width: 175 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
+                        )}
                         {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
                           <input type="number" min="0" max="70" step="1" placeholder="My share % (0-70)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         )}
@@ -4833,7 +4835,7 @@ export default function App() {
                 {myRepresentedCompanies.length > 0 && (
                   <div className="gnt-field">
                     <label>Acting as (optional — leave blank to counter as yourself)</label>
-                    <select value={counterRepresented} onChange={e => setCounterRepresented(e.target.value)}>
+                    <select value={counterRepresented} onChange={e => { setCounterRepresented(e.target.value); if (!e.target.value) setCounterCommission(""); }}>
                       <option value="">Myself ({myCompany?.company_name})</option>
                       {myRepresentedCompanies.map(c => <option key={c.id} value={c.id}>On behalf of {c.company_name}</option>)}
                     </select>
@@ -4841,7 +4843,9 @@ export default function App() {
                 )}
                 {counterError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {counterError}</div>}
                 <div className="gnt-field"><label>Your counter price (R / litre)</label><input type="number" min="0" step="0.01" value={counterPrice} onChange={e => setCounterPrice(e.target.value)} placeholder="20.40" /></div>
-                <div className="gnt-field"><label>Commission, cents/litre (optional — only relevant if you're representing someone as their Mandate)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                {counterRepresented && (
+                  <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                )}
                 <p className="hint" style={{ marginBottom: 12 }}>The other party can accept, counter back, or decline (up to 2 rounds each). Track this from "My negotiations" on your Dashboard.</p>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="gnt-btn gnt-btn-amber" disabled={counterSubmitting} onClick={submitCounterOffer}>{counterSubmitting ? "Sending…" : "Send counter-offer"}</button>
