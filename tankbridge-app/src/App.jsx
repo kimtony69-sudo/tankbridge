@@ -4818,7 +4818,11 @@ export default function App() {
                 <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to counter this price</h3>
                 <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in with your account to send a counter-offer. New here? Register first.</p>
                 <LoginGate
-                  onLoggedIn={() => { setCounterTarget(null); goto("dashboard"); }}
+                  onLoggedIn={async () => {
+                    const { data } = await supabase.rpc("get_my_represented_companies");
+                    const neededType = counterTarget.kind === "sell" ? "buyer" : "seller";
+                    setMyRepresentedCompanies((data || []).filter(c => c.type === neededType));
+                  }}
                   onRegisterClick={() => { setCounterTarget(null); resetRegFlow(); }}
                 />
               </>
@@ -4856,9 +4860,9 @@ export default function App() {
             {!session ? (
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to submit an offer</h3>
-                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in with your seller account to submit an offer — you'll land on your Dashboard. New here? Register as a seller instead.</p>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in with your seller account to submit an offer. New here? Register as a seller instead.</p>
                 <LoginGate
-                  onLoggedIn={() => { setOfferTarget(null); goto("dashboard"); }}
+                  onLoggedIn={() => {}}
                   onRegisterClick={() => { setOfferTarget(null); resetRegFlow(); }}
                 />
               </>
@@ -4961,9 +4965,9 @@ export default function App() {
             ) : !session ? (
               <>
                 <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to continue</h3>
-                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in to accept this price — you'll land on your Dashboard. New here? Register your company instead.</p>
+                <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in to accept this price. New here? Register your company instead.</p>
                 <LoginGate
-                  onLoggedIn={() => { setAcceptTarget(null); goto("dashboard"); }}
+                  onLoggedIn={() => {}}
                   onRegisterClick={() => { setAcceptTarget(null); resetRegFlow(); }}
                 />
               </>
