@@ -1124,7 +1124,7 @@ export default function App() {
   }, [myCompany]);
 
   const loadMyReferrals = useCallback(async () => {
-    if (!myCompany || myCompany.type !== "broker") return;
+    if (!myCompany) { setMyReferrals([]); return; }
     const { data } = await supabase.from("referrals").select("*").eq("broker_company_id", myCompany.id).order("created_at", { ascending: false });
     setMyReferrals(data || []);
   }, [myCompany]);
@@ -1136,7 +1136,7 @@ export default function App() {
   }, [myCompany]);
 
   const loadMyBrokerCommissions = useCallback(async () => {
-    if (!myCompany || myCompany.type !== "broker") return;
+    if (!myCompany || myCompany.type !== "broker") { setMyBrokerCommissions([]); return; }
     const { data } = await supabase.from("deal_broker_commissions").select("*, deals(product, volume, unit_price, created_at, seller_company_id, buyer_company_id)")
       .eq("broker_company_id", myCompany.id).order("created_at", { ascending: false });
     setMyBrokerCommissions(data || []);
