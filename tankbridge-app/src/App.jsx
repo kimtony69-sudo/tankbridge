@@ -800,6 +800,7 @@ export default function App() {
   const [offerSubmitting, setOfferSubmitting] = useState(false);
   const [offerRepresented, setOfferRepresented] = useState("");
   const [offerCommission, setOfferCommission] = useState("");
+  const [offerSharePct, setOfferSharePct] = useState("");
   const [myRepresentedSellerCompanies, setMyRepresentedSellerCompanies] = useState([]);
   const [myOffers, setMyOffers] = useState([]);
   const [offerCounterInputs, setOfferCounterInputs] = useState({});
@@ -809,6 +810,7 @@ export default function App() {
   const [counterPrice, setCounterPrice] = useState("");
   const [counterCommission, setCounterCommission] = useState("");
   const [counterRepresented, setCounterRepresented] = useState("");
+  const [counterSharePct, setCounterSharePct] = useState("");
   const [counterError, setCounterError] = useState("");
   const [counterSubmitting, setCounterSubmitting] = useState(false);
   const [myRepresentedCompanies, setMyRepresentedCompanies] = useState([]);
@@ -1852,6 +1854,7 @@ export default function App() {
     setOfferError("");
     setOfferRepresented("");
     setOfferCommission("");
+    setOfferSharePct("");
     if (session) {
       const { data } = await supabase.rpc("get_my_represented_companies");
       setMyRepresentedSellerCompanies((data || []).filter(c => c.type === "seller"));
@@ -1868,6 +1871,7 @@ export default function App() {
       p_price: price,
       p_commission_rate: offerRepresented && offerCommission ? centsFieldToRand(offerCommission) : null,
       p_represented_company_id: offerRepresented || null,
+      p_my_share_pct: offerRepresented && offerSharePct !== "" ? Number(offerSharePct) / 100 : null,
     });
     setOfferSubmitting(false);
     if (error) { setOfferError(error.message); return; }
@@ -1917,7 +1921,7 @@ export default function App() {
                         {isDelegate && (
                           <input type="number" min="0" step="1" placeholder="Commission, cents (optional)" style={{ width: 175 }} value={offerCommissionInputs[counterKey] || ""} onChange={e => setOfferCommissionInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         )}
-                        {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
+                        {isDelegate && (
                           <input type="number" min="0" max="70" step="1" placeholder="My share % (0-70)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         )}
                         <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey], offerShareInputs[counterKey])}>
@@ -1931,6 +1935,9 @@ export default function App() {
                   </div>
                   {isDelegate && (isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
                     <p className="hint" style={{ marginTop: 6 }}>Both sides have a Mandate on this deal — you can each set your own share of the 70% broker pool, split however you agree (e.g. 70/0, 50/20), as long as the combined total doesn't exceed 70%. Leave blank to keep the current 35% default.</p>
+                  )}
+                  {isDelegate && !(isBuyerSide ? o.seller_negotiator_id : o.buyer_negotiator_id) && (
+                    <p className="hint" style={{ marginTop: 6 }}>Set your own share of the 70% broker pool — including 0% if you're not taking a fee on this deal. Leave blank to take the full pool as usual.</p>
                   )}
                   {isDelegate && offerCommissionInputs[counterKey] && Number(offerCommissionInputs[counterKey]) > 0 && (() => {
                     const rate = centsFieldToRand(offerCommissionInputs[counterKey]);
@@ -1992,6 +1999,7 @@ export default function App() {
     setCounterPrice("");
     setCounterCommission("");
     setCounterRepresented("");
+    setCounterSharePct("");
     setCounterError("");
     if (session) {
       const { data } = await supabase.rpc("get_my_represented_companies");
@@ -2010,6 +2018,7 @@ export default function App() {
       p_price: price,
       p_commission_rate: counterCommission ? centsFieldToRand(counterCommission) : null,
       p_represented_company_id: counterRepresented || null,
+      p_my_share_pct: counterRepresented && counterSharePct !== "" ? Number(counterSharePct) / 100 : null,
     });
     setCounterSubmitting(false);
     if (error) { setCounterError(error.message); return; }
@@ -4849,7 +4858,7 @@ export default function App() {
                 {myRepresentedCompanies.length > 0 && (
                   <div className="gnt-field">
                     <label>Acting as (optional — leave blank to counter as yourself)</label>
-                    <select value={counterRepresented} onChange={e => { setCounterRepresented(e.target.value); if (!e.target.value) setCounterCommission(""); }}>
+                    <select value={counterRepresented} onChange={e => { setCounterRepresented(e.target.value); if (!e.target.value) { setCounterCommission(""); setCounterSharePct(""); } }}>
                       <option value="">Myself ({myCompany?.company_name})</option>
                       {myRepresentedCompanies.map(c => <option key={c.id} value={c.id}>On behalf of {c.company_name}</option>)}
                     </select>
@@ -4858,7 +4867,10 @@ export default function App() {
                 {counterError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {counterError}</div>}
                 <div className="gnt-field"><label>Your counter price (R / litre)</label><input type="number" min="0" step="0.01" value={counterPrice} onChange={e => setCounterPrice(e.target.value)} placeholder="20.40" /></div>
                 {counterRepresented && (
-                  <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                  <>
+                    <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                    <div className="gnt-field"><label>My share of the 70% broker pool, % (optional — leave blank for the standard split)</label><input type="number" min="0" max="70" step="1" value={counterSharePct} onChange={e => setCounterSharePct(e.target.value)} placeholder="e.g. 0 if you're not taking a fee" /></div>
+                  </>
                 )}
                 <p className="hint" style={{ marginBottom: 12 }}>The other party can accept, counter back, or decline (up to 2 rounds each). Track this from "My negotiations" on your Dashboard.</p>
                 <div style={{ display: "flex", gap: 10 }}>
@@ -4905,7 +4917,7 @@ export default function App() {
                 {myRepresentedSellerCompanies.length > 0 && myCompany?.type === "seller" && (
                   <div className="gnt-field">
                     <label>Acting as (optional — leave blank to offer as yourself)</label>
-                    <select value={offerRepresented} onChange={e => { setOfferRepresented(e.target.value); if (!e.target.value) setOfferCommission(""); }}>
+                    <select value={offerRepresented} onChange={e => { setOfferRepresented(e.target.value); if (!e.target.value) { setOfferCommission(""); setOfferSharePct(""); } }}>
                       <option value="">Myself ({myCompany?.company_name})</option>
                       {myRepresentedSellerCompanies.map(c => <option key={c.id} value={c.id}>On behalf of {c.company_name}</option>)}
                     </select>
@@ -4923,7 +4935,10 @@ export default function App() {
                 {offerError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {offerError}</div>}
                 <div className="gnt-field"><label>Your offer (R / litre)</label><input type="number" min="0" step="0.01" value={offerPrice} onChange={e => setOfferPrice(e.target.value)} placeholder="21.45" /></div>
                 {offerRepresented && (
-                  <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={offerCommission} onChange={e => setOfferCommission(e.target.value)} /></div>
+                  <>
+                    <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={offerCommission} onChange={e => setOfferCommission(e.target.value)} /></div>
+                    <div className="gnt-field"><label>My share of the 70% broker pool, % (optional — leave blank for the standard split)</label><input type="number" min="0" max="70" step="1" value={offerSharePct} onChange={e => setOfferSharePct(e.target.value)} placeholder="e.g. 0 if you're not taking a fee" /></div>
+                  </>
                 )}
                 <p className="hint" style={{ marginBottom: 12 }}>The buyer can accept or counter (up to 2 rounds each). If not accepted after that, the negotiation falls through.</p>
                 <div style={{ display: "flex", gap: 10 }}>
