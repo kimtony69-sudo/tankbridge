@@ -110,7 +110,7 @@ export default async function handler(req, res) {
     }
 
     if (type === "share_listing") {
-      const { shareToEmail, sharedByCompanyName } = req.body || {};
+      const { shareToEmail, sharedByName } = req.body || {};
       if (!listingId || !shareToEmail) return res.status(400).json({ error: "Missing listingId or shareToEmail" });
 
       const listing = (await sb(`listings?id=eq.${listingId}&select=*`, serviceKey, supabaseUrl))?.[0];
@@ -119,20 +119,42 @@ export default async function handler(req, res) {
       const isSell = listing.kind !== "buy";
       const terms = Array.isArray(listing.terms) ? listing.terms.join(" / ") : listing.terms;
       const priceLine = listing.price_mode === "seller_offer"
-        ? `<p><strong>Price:</strong> Submit your offer</p>`
-        : `<p><strong>${isSell ? "Asking" : "Bid"}:</strong> R ${Number(listing.unit_price).toFixed(2)} / litre</p>`;
+        ? `<p style="margin:0;text-align:left;"><strong>Price:</strong> Submit your offer</p>`
+        : `<p style="margin:0;text-align:left;"><strong>${isSell ? "Asking" : "Bid"}:</strong> R ${Number(listing.unit_price).toFixed(2)} / litre</p>`;
+
+      // Recipient-perspective benefits: a "Selling" listing is aimed at a
+      // buyer, and vice versa — so the benefits below speak to whichever
+      // side is actually reading this email.
+      const benefits = isSell
+        ? `
+          <p style="margin:0 0 6px;font-weight:500;">Why buyers use Tankbridge?</p>
+          <p style="margin:2px 0;">&#10003; Every seller is CIPC/DMRE-verified before you ever see a name</p>
+          <p style="margin:2px 0;">&#10003; Accept this price directly, or counter it yourself — no middleman markup</p>
+          <p style="margin:2px 0;">&#10003; Funds only move once, paid by an independent escrow, on your terms</p>
+        `
+        : `
+          <p style="margin:0 0 6px;font-weight:500;">Why sellers use Tankbridge?</p>
+          <p style="margin:2px 0;">&#10003; Every buyer is CIPC-verified before you ever see a name</p>
+          <p style="margin:2px 0;">&#10003; Accept this bid directly, or counter it yourself — no middleman markup</p>
+          <p style="margin:2px 0;">&#10003; Funds only move once, paid by an independent escrow, on your terms</p>
+        `;
 
       await sendResendEmail({
         to: shareToEmail,
-        subject: `${sharedByCompanyName || "Someone"} shared a Tankbridge listing with you`,
+        subject: `Good news — a Tankbridge listing you might be interested in`,
         html: `
-          <h2>${sharedByCompanyName || "A Tankbridge user"} thought you'd want to see this</h2>
-          <p><strong>${isSell ? "Selling" : "Buyer requirement"}:</strong> ${listing.product}</p>
-          <p><strong>Volume:</strong> ${Number(listing.volume).toLocaleString()} litres</p>
-          <p><strong>Terms:</strong> ${terms}</p>
-          <p><strong>Location:</strong> ${listing.location}</p>
-          ${priceLine}
-          <p style="margin-top:16px;"><a href="https://tankbridge.co.za/?view=market" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">View on the Market Board</a></p>
+          <h2 style="margin:0 0 8px;">Good news — there's something on Tankbridge you might be interested in.</h2>
+          <p style="margin:0 0 24px;">${sharedByName || "Someone on Tankbridge"} thought this one was worth a look:</p>
+          <div style="margin-bottom:24px;">
+            <p style="margin:0 0 4px;text-align:left;"><strong>${isSell ? "Selling" : "Buyer requirement"}:</strong> ${listing.product}</p>
+            <p style="margin:0 0 4px;text-align:left;"><strong>Volume:</strong> ${Number(listing.volume).toLocaleString()} litres</p>
+            <p style="margin:0 0 4px;text-align:left;"><strong>Terms:</strong> ${terms}</p>
+            <p style="margin:0 0 4px;text-align:left;"><strong>Location:</strong> ${listing.location}</p>
+            ${priceLine}
+          </div>
+          ${benefits}
+          <p style="margin-top:20px;"><a href="https://tankbridge.co.za/?view=market" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">View on the Market Board</a></p>
+          <p style="font-size:12px;color:#888;margin-top:20px;">New to Tankbridge? Registering only takes a few minutes.</p>
         `,
       });
 
