@@ -2475,17 +2475,15 @@ export default function App() {
       setNewBrokerListingError("Please complete all fields and select at least one term."); return;
     }
     if (Number(f.volume) < 40000) { setNewBrokerListingError("Minimum tradable volume is 40,000 litres."); return; }
-    const { error } = await supabase.from("listings").insert({
-      company_id: referral.company_id,
-      kind: referral.referred_type === "seller" ? "sell" : "buy",
-      product: f.product,
-      volume: Number(f.volume),
-      unit_price: Number(f.unitPrice),
-      price_mode: "fixed",
-      terms: f.terms,
-      location: f.location,
-      bol_terms: f.bolTerms,
-      status: "active",
+    const { error } = await supabase.rpc("create_represented_listing", {
+      p_company_id: referral.company_id,
+      p_kind: referral.referred_type === "seller" ? "sell" : "buy",
+      p_product: f.product,
+      p_volume: Number(f.volume),
+      p_unit_price: Number(f.unitPrice),
+      p_terms: f.terms,
+      p_location: f.location,
+      p_bol_terms: f.bolTerms,
     });
     if (error) { setNewBrokerListingError(error.message); return; }
     cancelAddBrokerListing();
