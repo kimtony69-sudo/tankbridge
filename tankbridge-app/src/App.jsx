@@ -2457,7 +2457,7 @@ export default function App() {
   function startAddBrokerListing(referral) {
     setNewBrokerListingForm({
       product: referral.product || PRODUCTS[0], volume: "", unitPrice: "", location: referral.location || "",
-      terms: [], bolTerms: "not_offered",
+      availability: "", terms: [], bolTerms: "not_offered",
     });
     setAddingListingReferralId(referral.id);
     setNewBrokerListingError("");
@@ -2471,7 +2471,7 @@ export default function App() {
 
   async function submitNewBrokerListing(referral) {
     const f = newBrokerListingForm;
-    if (!f.product || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
+    if (!f.product || !f.volume || !f.unitPrice || !f.location || !f.availability || !f.terms || f.terms.length === 0) {
       setNewBrokerListingError("Please complete all fields and select at least one term."); return;
     }
     if (Number(f.volume) < 40000) { setNewBrokerListingError("Minimum tradable volume is 40,000 litres."); return; }
@@ -2483,6 +2483,7 @@ export default function App() {
       p_unit_price: Number(f.unitPrice),
       p_terms: f.terms,
       p_location: f.location,
+      p_availability: f.availability,
       p_bol_terms: f.bolTerms,
     });
     if (error) { setNewBrokerListingError(error.message); return; }
@@ -4262,6 +4263,7 @@ export default function App() {
                                 <div className="gnt-field"><label>Price (R/litre)</label><input type="number" step="0.01" value={newBrokerListingForm.unitPrice} onChange={e => setNewBrokerListingForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
                               </div>
                               <div className="gnt-field"><label>Location</label><input value={newBrokerListingForm.location} onChange={e => setNewBrokerListingForm(f => ({ ...f, location: e.target.value }))} /></div>
+                              <div className="gnt-field"><label>Availability</label><input value={newBrokerListingForm.availability} onChange={e => setNewBrokerListingForm(f => ({ ...f, availability: e.target.value }))} placeholder="e.g. Immediate / 48 hrs" /></div>
                               <div className="gnt-field"><label>Terms</label>
                                 <TermsCheckboxGroup value={newBrokerListingForm.terms} onChange={v => setNewBrokerListingForm(f => ({ ...f, terms: v }))} />
                               </div>
