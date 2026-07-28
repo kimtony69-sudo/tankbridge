@@ -109,6 +109,36 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, matchedCompanies: seenCompanyIds.size, emailsSent: recipients.length });
     }
 
+    if (type === "share_listing") {
+      const { shareToEmail, sharedByCompanyName } = req.body || {};
+      if (!listingId || !shareToEmail) return res.status(400).json({ error: "Missing listingId or shareToEmail" });
+
+      const listing = (await sb(`listings?id=eq.${listingId}&select=*`, serviceKey, supabaseUrl))?.[0];
+      if (!listing) return res.status(404).json({ error: "Listing not found" });
+
+      const isSell = listing.kind !== "buy";
+      const terms = Array.isArray(listing.terms) ? listing.terms.join(" / ") : listing.terms;
+      const priceLine = listing.price_mode === "seller_offer"
+        ? `<p><strong>Price:</strong> Submit your offer</p>`
+        : `<p><strong>${isSell ? "Asking" : "Bid"}:</strong> R ${Number(listing.unit_price).toFixed(2)} / litre</p>`;
+
+      await sendResendEmail({
+        to: shareToEmail,
+        subject: `${sharedByCompanyName || "Someone"} shared a Tankbridge listing with you`,
+        html: `
+          <h2>${sharedByCompanyName || "A Tankbridge user"} thought you'd want to see this</h2>
+          <p><strong>${isSell ? "Selling" : "Buyer requirement"}:</strong> ${listing.product}</p>
+          <p><strong>Volume:</strong> ${Number(listing.volume).toLocaleString()} litres</p>
+          <p><strong>Terms:</strong> ${terms}</p>
+          <p><strong>Location:</strong> ${listing.location}</p>
+          ${priceLine}
+          <p style="margin-top:16px;"><a href="https://tankbridge.co.za/?view=market" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">View on the Market Board</a></p>
+        `,
+      });
+
+      return res.status(200).json({ ok: true });
+    }
+
     if (!offerId || !event) return res.status(400).json({ error: "Missing offerId or event" });
 
     const offer = (await sb(`offers?id=eq.${offerId}&select=*,listings(product,volume,terms,location)`, serviceKey, supabaseUrl))?.[0];
