@@ -1,7 +1,9 @@
 // This runs on Vercel as a Cron Job at /api/weekly-price-check (see vercel.json).
-// Every Monday at 10:00 SAST, emails every company with active listings asking
-// them to confirm their price is still correct, or update it if the market
-// has moved — since a stale price can quietly kill deals either way.
+// Every Monday at 10:00 SAST, emails whoever can actually act on each active
+// listing's price: the company itself once they're registered and can log
+// in, or — while they're still an unregistered placeholder being represented
+// by a Mandate — their authorised Mandate instead. Never both; whichever one
+// can currently log in and edit the price is the one who gets asked.
 
 function fmtTerms(t) {
   if (!t) return "-";
@@ -45,21 +47,40 @@ export default async function handler(req, res) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   try {
-    // Only real, logged-in companies — broker-referral placeholder accounts
-    // (no user_id) can't log in to update anything, so skip them.
-    const listings = await sb(`listings?status=eq.active&select=*,companies(company_name,email,user_id,type)`, serviceKey, supabaseUrl);
-    const withLogin = listings.filter(l => l.companies && l.companies.user_id && l.companies.email && l.companies.email !== "-");
+    const listings = await sb(`listings?status=eq.active&select=*,companies(company_name,email,user_id,type,authorized_negotiator_id)`, serviceKey, supabaseUrl);
 
     const byCompany = {};
-    for (const l of withLogin) {
+    for (const l of listings) {
+      if (!l.companies) continue;
       const key = l.company_id;
       if (!byCompany[key]) byCompany[key] = { company: l.companies, listings: [] };
       byCompany[key].listings.push(l);
     }
 
+    // Look up the authorised Mandate for any still-unregistered company.
+    const negotiatorIds = [...new Set(Object.values(byCompany)
+      .filter(v => !v.company.user_id && v.company.authorized_negotiator_id)
+      .map(v => v.company.authorized_negotiator_id))];
+    const negotiators = {};
+    for (const id of negotiatorIds) {
+      const rows = await sb(`companies?id=eq.${id}&select=id,company_name,email`, serviceKey, supabaseUrl);
+      if (rows?.[0]?.email && rows[0].email !== "-") negotiators[id] = rows[0];
+    }
+
     let sent = 0;
     for (const key of Object.keys(byCompany)) {
       const { company, listings: myListings } = byCompany[key];
+
+      // Registered company → they get the check-in themselves.
+      // Not yet registered → their authorised Mandate gets it instead (they
+      // can't log in to update anything themselves yet). No Mandate and not
+      // registered → nobody can act on this listing, so skip it.
+      const isRegistered = !!company.user_id;
+      const negotiator = !isRegistered && company.authorized_negotiator_id ? negotiators[company.authorized_negotiator_id] : null;
+      const recipient = isRegistered ? (company.email && company.email !== "-" ? { email: company.email, company_name: company.company_name } : null)
+                                      : (negotiator ? { email: negotiator.email, company_name: negotiator.company_name } : null);
+      if (!recipient) continue;
+
       const rows = myListings.map(l => `
         <tr>
           <td style="padding:6px 10px;border-bottom:1px solid #eee;">${l.product}</td>
@@ -69,12 +90,7 @@ export default async function handler(req, res) {
           <td style="padding:6px 10px;border-bottom:1px solid #eee;">${l.location}</td>
         </tr>
       `).join("");
-
-      const subject = `Weekly price check — is your Tankbridge listing still accurate?`;
-      const html = `
-        <h2>Quick weekly price check</h2>
-        <p>Hi ${company.company_name},</p>
-        <p>Market prices move fast. Please confirm your ${company.type === "seller" ? "asking" : "bid"} price below is still correct — a stale price can lose you a match or waste a counterparty's time.</p>
+      const table = `
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
           <thead>
             <tr style="text-align:left;background:#f6f4ec;">
@@ -87,13 +103,25 @@ export default async function handler(req, res) {
           </thead>
           <tbody>${rows}</tbody>
         </table>
-        <p style="margin-top:20px;">
-          <a href="https://tankbridge.co.za/?view=dashboard" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">Log in to confirm or update</a>
-        </p>
-        <p style="font-size:12px;color:#888;margin-top:20px;">No changes needed? You can ignore this — we'll check in again next Monday.</p>
       `;
 
-      const ok = await sendResendEmail({ to: company.email, subject, html });
+      const subject = `Weekly price check — is your Tankbridge listing still accurate?`;
+      const intro = negotiator
+        ? `<p>Hi ${recipient.company_name},</p><p>As ${company.company_name}'s authorised Mandate, here's their weekly check-in. Please confirm the ${company.type === "seller" ? "asking" : "bid"} price below is still correct — a stale price can lose a match or waste a counterparty's time.</p>`
+        : `<p>Hi ${recipient.company_name},</p><p>Market prices move fast. Please confirm your ${company.type === "seller" ? "asking" : "bid"} price below is still correct — a stale price can lose you a match or waste a counterparty's time.</p>`;
+
+      const ok = await sendResendEmail({
+        to: recipient.email, subject,
+        html: `
+          <h2>Quick weekly price check</h2>
+          ${intro}
+          ${table}
+          <p style="margin-top:20px;">
+            <a href="https://tankbridge.co.za/?view=dashboard" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">Log in to confirm or update</a>
+          </p>
+          <p style="font-size:12px;color:#888;margin-top:20px;">No changes needed? You can ignore this — we'll check in again next Monday.</p>
+        `,
+      });
       if (ok) sent++;
     }
 
