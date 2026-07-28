@@ -796,6 +796,11 @@ export default function App() {
   const [imfpaCommissionRate, setImfpaCommissionRate] = useState("10");
 
   const [marketFilter, setMarketFilter] = useState({ kind: "all", product: "all", terms: "all" });
+  const [shareTargetId, setShareTargetId] = useState(null);
+  const [shareEmails, setShareEmails] = useState([""]);
+  const [sharePhone, setSharePhone] = useState("");
+  const [shareSending, setShareSending] = useState(false);
+  const [shareSentOk, setShareSentOk] = useState(false);
   const [acceptTarget, setAcceptTarget] = useState(null);
   const [offerTarget, setOfferTarget] = useState(null);
   const [offerPrice, setOfferPrice] = useState("");
@@ -912,6 +917,12 @@ export default function App() {
     });
     if (error) { setReferralConfirmError(error.message); return; }
     setReferralConfirmResult({ approved, referral: data });
+    if (approved && data?.listing_id) {
+      fetch("/api/notify-offer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "new_listing_match", listingId: data.listing_id }),
+      }).catch(() => {});
+    }
   }
 
   // ---------- CO-BROKER HANDOFF CLAIM (broker login required) ----------
@@ -2001,6 +2012,72 @@ export default function App() {
     );
   }
 
+  function renderShareListingPanel(listing) {
+    return (
+      <div style={{ marginTop: 10 }}>
+        {shareSentOk ? (
+          <p style={{ fontSize: 13, color: "var(--steel)" }}>Sent — they'll get an email with this listing's details.</p>
+        ) : (
+          <>
+            <p className="hint" style={{ marginBottom: 8 }}>Know a buyer or seller who'd want this? Send it straight to them instead of waiting for them to spot it.</p>
+            {shareEmails.map((email, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                <input
+                  type="email" placeholder="their@email.co.za" style={{ width: 220 }}
+                  value={email}
+                  onChange={e => setShareEmails(arr => arr.map((v, idx) => idx === i ? e.target.value : v))}
+                />
+                {shareEmails.length > 1 && (
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShareEmails(arr => arr.filter((_, idx) => idx !== i))}>Remove</button>
+                )}
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {shareEmails.length < 3 && (
+                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShareEmails(arr => [...arr, ""])}>+ Add another email (up to 3)</button>
+              )}
+              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={shareSending} onClick={() => submitShareListingEmail(listing)}>{shareSending ? "Sending…" : "Send email"}</button>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+              <input type="tel" placeholder="Their WhatsApp number (optional)" style={{ width: 220 }} value={sharePhone} onChange={e => setSharePhone(e.target.value)} />
+              <a className="gnt-btn gnt-btn-ghost gnt-btn-sm" href={shareListingWhatsAppLink(listing)} target="_blank" rel="noreferrer">Share via WhatsApp</a>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+
+  function toggleShareListing(listingId) {
+    setShareTargetId(prev => prev === listingId ? null : listingId);
+    setShareEmails([""]); setSharePhone(""); setShareSentOk(false);
+  }
+
+  async function submitShareListingEmail(listing) {
+    const validEmails = [...new Set(shareEmails.map(e => e.trim()).filter(e => e && e.includes("@")))];
+    if (validEmails.length === 0) { showToast("Please enter at least one valid email address.", "err"); return; }
+    setShareSending(true);
+    const results = await Promise.all(validEmails.map(email =>
+      fetch("/api/notify-offer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "share_listing", listingId: listing.id, shareToEmail: email, sharedByCompanyName: myCompany?.company_name || "A Tankbridge user" }),
+      }).catch(() => null)
+    ));
+    setShareSending(false);
+    if (results.every(r => r && r.ok)) { setShareSentOk(true); } else { showToast("Some emails may not have sent — please check and try again.", "err"); }
+  }
+
+  function shareListingWhatsAppLink(listing) {
+    const isSell = listing.kind !== "buy";
+    const terms = Array.isArray(listing.terms) ? listing.terms.join("/") : listing.terms;
+    const priceLine = listing.price_mode === "seller_offer" ? "Submit your offer" : `${isSell ? "Asking" : "Bid"}: R ${Number(listing.unit_price).toFixed(2)}/ℓ`;
+    const text = `Tankbridge listing: ${isSell ? "Selling" : "Buying"} ${listing.product}, ${Number(listing.volume).toLocaleString()}ℓ, ${terms}, ${listing.location}. ${priceLine}. https://tankbridge.co.za/?view=market`;
+    const digits = sharePhone.replace(/[^0-9]/g, "");
+    return digits ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+  }
+
+
   async function openCounter(listing) {
     setCounterTarget(listing);
     setCounterPrice("");
@@ -2345,8 +2422,14 @@ export default function App() {
   }
 
   async function setReferralStatus(referral, status, reason) {
-    const { error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status, p_reason: reason || null });
+    const { data: updatedReferral, error } = await supabase.rpc("set_referral_status", { p_referral_id: referral.id, p_new_status: status, p_reason: reason || null });
     if (error) { showToast(error.message, "err"); return; }
+    if (status === "approved" && updatedReferral?.listing_id) {
+      fetch("/api/notify-offer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "new_listing_match", listingId: updatedReferral.listing_id }),
+      }).catch(() => {});
+    }
     if (status === "approved" && referral.is_co_broker_referral) {
       const res = await fetch("/api/send-referral-email", {
         method: "POST",
@@ -2475,7 +2558,7 @@ export default function App() {
       setNewBrokerListingError("Please complete all fields and select at least one term."); return;
     }
     if (Number(f.volume) < 40000) { setNewBrokerListingError("Minimum tradable volume is 40,000 litres."); return; }
-    const { error } = await supabase.rpc("create_represented_listing", {
+    const { data, error } = await supabase.rpc("create_represented_listing", {
       p_company_id: referral.company_id,
       p_kind: referral.referred_type === "seller" ? "sell" : "buy",
       p_product: f.product,
@@ -2491,6 +2574,10 @@ export default function App() {
     await loadMyReferrals();
     await loadMarketBoard();
     showToast("Additional listing published to the Market Board.");
+    fetch("/api/notify-offer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "new_listing_match", listingId: data.id }),
+    }).catch(() => {});
   }
 
   const pendingCompanies = adminCompanies.filter(c => c.status === "pending");
@@ -3896,10 +3983,14 @@ export default function App() {
                             ) : isFellThrough ? (
                               <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>This deal fell through and was confirmed by admin, so the listing is no longer available on the Market Board.</p>
                             ) : (
-                              <div style={{ display: "flex", gap: 8 }}>
-                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
-                                <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
-                              </div>
+                              <>
+                                <div style={{ display: "flex", gap: 8 }}>
+                                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
+                                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
+                                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(l.id)}><Mail size={13} /> {shareTargetId === l.id ? "Close" : "Share with someone you know"}</button>
+                                </div>
+                                {shareTargetId === l.id && renderShareListingPanel(l)}
+                              </>
                             )}
                           </div>
                         );
@@ -4240,11 +4331,16 @@ export default function App() {
                               </div>
                             </div>
                           ) : (
-                            <div style={{ display: "flex", gap: 8 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                               <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEditBrokerListing(r)}>Edit listing</button>
                               <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { if (window.confirm("Cancel and remove this listing from the Market Board?")) cancelBrokerListing(r); }}>Cancel listing</button>
+                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(r.listing_id)}><Mail size={13} /> {shareTargetId === r.listing_id ? "Close" : "Share with someone you know"}</button>
                             </div>
                           )}
+                          {shareTargetId === r.listing_id && renderShareListingPanel({
+                            id: r.listing_id, kind: r.referred_type === "seller" ? "sell" : "buy", product: r.product,
+                            volume: r.volume, unit_price: r.unit_price, price_mode: "fixed", terms: r.terms, location: r.location,
+                          })}
                           <p className="hint" style={{ marginTop: 6 }}>You can manage this listing until {r.referred_company_name} completes their own registration — after that, it's under their control.</p>
                         </div>
                       )}
