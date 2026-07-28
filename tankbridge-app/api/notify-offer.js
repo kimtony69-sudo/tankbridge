@@ -6,6 +6,11 @@
 // placeholder being represented by a delegate. On acceptance, an unregistered
 // party is told to complete their own registration (mirroring notify-accept.js)
 // rather than just "open your dashboard".
+//
+// Also handles { type: "new_listing_match", listingId }: fired right after a
+// new listing is published, emailing companies (and their authorised Mandate)
+// that currently have an active listing of the opposite kind for the same
+// product — a real-time signal of interest, not a blast to every registrant.
 
 async function sendResendEmail({ to, subject, html }) {
   const res = await fetch("https://api.resend.com/emails", {
@@ -38,11 +43,73 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { offerId, event } = req.body || {};
-    if (!offerId || !event) return res.status(400).json({ error: "Missing offerId or event" });
+    const { offerId, event, type, listingId } = req.body || {};
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    // ---------------- New matching listing on the Market Board ----------------
+    // Fires right after a listing is published. Only emails companies that
+    // currently show real interest (an active listing of the opposite kind,
+    // same product) rather than every buyer/seller ever registered — plus
+    // each matched company's authorised Mandate, if they have one.
+    if (type === "new_listing_match") {
+      if (!listingId) return res.status(400).json({ error: "Missing listingId" });
+
+      const listing = (await sb(`listings?id=eq.${listingId}&select=*,companies(id,company_name)`, serviceKey, supabaseUrl))?.[0];
+      if (!listing) return res.status(404).json({ error: "Listing not found" });
+
+      const oppositeKind = listing.kind === "sell" ? "buy" : "sell";
+      const matches = await sb(
+        `listings?status=eq.active&kind=eq.${oppositeKind}&product=eq.${encodeURIComponent(listing.product)}&company_id=neq.${listing.company_id}&select=company_id,companies(id,company_name,email,user_id,type,authorized_negotiator_id)`,
+        serviceKey, supabaseUrl
+      );
+
+      const seenCompanyIds = new Set();
+      const recipients = []; // { email, company_name, forNegotiatorOf }
+      for (const m of matches) {
+        const co = m.companies;
+        if (!co || seenCompanyIds.has(co.id)) continue;
+        seenCompanyIds.add(co.id);
+
+        if (co.user_id && co.email && co.email !== "-") {
+          recipients.push({ email: co.email, company_name: co.company_name, forNegotiatorOf: null });
+        }
+        if (co.authorized_negotiator_id) {
+          const negRows = await sb(`companies?id=eq.${co.authorized_negotiator_id}&select=company_name,email`, serviceKey, supabaseUrl);
+          const neg = negRows?.[0];
+          if (neg?.email && neg.email !== "-") {
+            recipients.push({ email: neg.email, company_name: neg.company_name, forNegotiatorOf: co.company_name });
+          }
+        }
+      }
+
+      const kindLabel = listing.kind === "sell" ? "selling" : "looking to buy";
+      const terms = Array.isArray(listing.terms) ? listing.terms.join(" / ") : listing.terms;
+      const subject = `New match on the Market Board: ${listing.product}, ${Number(listing.volume).toLocaleString()}ℓ, ${listing.location}`;
+      const summary = `
+        <p><strong>${listing.kind === "sell" ? "Selling" : "Buyer requirement"}:</strong> ${listing.product}</p>
+        <p><strong>Volume:</strong> ${Number(listing.volume).toLocaleString()} litres</p>
+        <p><strong>Terms:</strong> ${terms}</p>
+        <p><strong>Location:</strong> ${listing.location}</p>
+        ${listing.unit_price ? `<p><strong>Price:</strong> R ${Number(listing.unit_price).toFixed(2)} / litre</p>` : ""}
+      `;
+
+      await Promise.all(recipients.map(r => sendResendEmail({
+        to: r.email,
+        subject,
+        html: `
+          <h2>New match on the Market Board</h2>
+          <p>${r.company_name}, a company is now ${kindLabel} ${listing.product} that matches ${r.forNegotiatorOf ? `${r.forNegotiatorOf}'s` : "your"} interest.</p>
+          ${summary}
+          <p style="margin-top:16px;"><a href="https://tankbridge.co.za/?view=market" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">View on the Market Board</a></p>
+        `,
+      })));
+
+      return res.status(200).json({ ok: true, matchedCompanies: seenCompanyIds.size, emailsSent: recipients.length });
+    }
+
+    if (!offerId || !event) return res.status(400).json({ error: "Missing offerId or event" });
 
     const offer = (await sb(`offers?id=eq.${offerId}&select=*,listings(product,volume,terms,location)`, serviceKey, supabaseUrl))?.[0];
     if (!offer) return res.status(404).json({ error: "Offer not found" });
