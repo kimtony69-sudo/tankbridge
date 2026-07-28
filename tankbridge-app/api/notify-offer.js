@@ -139,7 +139,7 @@ export default async function handler(req, res) {
           <p style="margin:2px 0;">&#10003; Funds only move once, paid by an independent escrow, on your terms</p>
         `;
 
-      await sendResendEmail({
+      const sent = await sendResendEmail({
         to: shareToEmail,
         subject: `Good news — a Tankbridge listing you might be interested in`,
         html: `
@@ -157,6 +157,7 @@ export default async function handler(req, res) {
           <p style="font-size:12px;color:#888;margin-top:20px;">New to Tankbridge? Registering only takes a few minutes.</p>
         `,
       });
+      if (!sent) return res.status(500).json({ error: "Email provider failed to send — check RESEND_API_KEY and NOTIFY_FROM_EMAIL domain verification." });
 
       return res.status(200).json({ ok: true });
     }
