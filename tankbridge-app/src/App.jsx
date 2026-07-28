@@ -759,6 +759,9 @@ export default function App() {
   const [editingListing, setEditingListing] = useState(null);
   const [editingBrokerListingId, setEditingBrokerListingId] = useState(null);
   const [brokerListingForm, setBrokerListingForm] = useState(null);
+  const [addingListingReferralId, setAddingListingReferralId] = useState(null);
+  const [newBrokerListingForm, setNewBrokerListingForm] = useState(null);
+  const [newBrokerListingError, setNewBrokerListingError] = useState("");
   const [brokerListingError, setBrokerListingError] = useState("");
   const [editError, setEditError] = useState("");
   const [showImfpaForm, setShowImfpaForm] = useState(false);
@@ -1487,7 +1490,7 @@ export default function App() {
     if (!listingForm.terms || listingForm.terms.length === 0) { setListingError("Select at least one trading term."); return; }
     if (vol < 40000) { setListingError("Minimum tradable volume is 40,000 litres."); return; }
     setListingError("");
-    const { error } = await supabase.from("listings").insert({
+    const { data: newListing, error } = await supabase.from("listings").insert({
       company_id: myCompany.id,
       kind: myCompany.type === "seller" ? "sell" : "buy",
       product: listingForm.product,
@@ -1501,12 +1504,16 @@ export default function App() {
       procedures: listingForm.procedures,
       bol_terms: listingForm.bolTerms,
       status: "active", // this form is only reachable once the company is already approved
-    });
+    }).select().single();
     if (error) { setListingError(error.message); return; }
     setListingForm(EMPTY_LISTING);
     await loadMyListings();
     await loadMarketBoard();
     showToast("Listing published to the Market Board.");
+    fetch("/api/notify-offer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "new_listing_match", listingId: newListing.id }),
+    }).catch(() => {});
   }
 
   function startEdit(listing) { setEditingListing({ ...listing, volume: String(listing.volume), unit_price: String(listing.unit_price) }); setEditError(""); }
@@ -2445,6 +2452,46 @@ export default function App() {
     await loadMyReferrals();
     await loadMarketBoard();
     showToast("Listing cancelled and removed from the Market Board.");
+  }
+
+  function startAddBrokerListing(referral) {
+    setNewBrokerListingForm({
+      product: referral.product || PRODUCTS[0], volume: "", unitPrice: "", location: referral.location || "",
+      terms: [], bolTerms: "not_offered",
+    });
+    setAddingListingReferralId(referral.id);
+    setNewBrokerListingError("");
+  }
+
+  function cancelAddBrokerListing() {
+    setAddingListingReferralId(null);
+    setNewBrokerListingForm(null);
+    setNewBrokerListingError("");
+  }
+
+  async function submitNewBrokerListing(referral) {
+    const f = newBrokerListingForm;
+    if (!f.product || !f.volume || !f.unitPrice || !f.location || !f.terms || f.terms.length === 0) {
+      setNewBrokerListingError("Please complete all fields and select at least one term."); return;
+    }
+    if (Number(f.volume) < 40000) { setNewBrokerListingError("Minimum tradable volume is 40,000 litres."); return; }
+    const { error } = await supabase.from("listings").insert({
+      company_id: referral.company_id,
+      kind: referral.referred_type === "seller" ? "sell" : "buy",
+      product: f.product,
+      volume: Number(f.volume),
+      unit_price: Number(f.unitPrice),
+      price_mode: "fixed",
+      terms: f.terms,
+      location: f.location,
+      bol_terms: f.bolTerms,
+      status: "active",
+    });
+    if (error) { setNewBrokerListingError(error.message); return; }
+    cancelAddBrokerListing();
+    await loadMyReferrals();
+    await loadMarketBoard();
+    showToast("Additional listing published to the Market Board.");
   }
 
   const pendingCompanies = adminCompanies.filter(c => c.status === "pending");
@@ -4200,6 +4247,35 @@ export default function App() {
                             </div>
                           )}
                           <p className="hint" style={{ marginTop: 6 }}>You can manage this listing until {r.referred_company_name} completes their own registration — after that, it's under their control.</p>
+                        </div>
+                      )}
+                      {r.status === "approved" && r.invite_status !== "accepted" && r.company_id && (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                          {addingListingReferralId === r.id ? (
+                            <div>
+                              {newBrokerListingError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {newBrokerListingError}</div>}
+                              <div className="gnt-field"><label>Product</label>
+                                <select value={newBrokerListingForm.product} onChange={e => setNewBrokerListingForm(f => ({ ...f, product: e.target.value }))}>
+                                  {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                              </div>
+                              <div className="gnt-grid2">
+                                <div className="gnt-field"><label>Volume (litres, min. 40,000)</label><input type="number" min="40000" value={newBrokerListingForm.volume} onChange={e => setNewBrokerListingForm(f => ({ ...f, volume: e.target.value }))} /></div>
+                                <div className="gnt-field"><label>Price (R/litre)</label><input type="number" step="0.01" value={newBrokerListingForm.unitPrice} onChange={e => setNewBrokerListingForm(f => ({ ...f, unitPrice: e.target.value }))} /></div>
+                              </div>
+                              <div className="gnt-field"><label>Location</label><input value={newBrokerListingForm.location} onChange={e => setNewBrokerListingForm(f => ({ ...f, location: e.target.value }))} /></div>
+                              <div className="gnt-field"><label>Terms</label>
+                                <TermsCheckboxGroup value={newBrokerListingForm.terms} onChange={v => setNewBrokerListingForm(f => ({ ...f, terms: v }))} />
+                              </div>
+                              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => submitNewBrokerListing(r)}>Publish listing</button>
+                                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={cancelAddBrokerListing}>Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startAddBrokerListing(r)}>+ Add another listing for {r.referred_company_name}</button>
+                          )}
+                          <p className="hint" style={{ marginTop: 6 }}>Same company, different volume, price or terms — e.g. a second location or a smaller lot. No need to refer them again.</p>
                         </div>
                       )}
                     </div>
