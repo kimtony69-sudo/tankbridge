@@ -2072,7 +2072,7 @@ export default function App() {
     const results = await Promise.all(validEmails.map(email =>
       fetch("/api/notify-offer", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "share_listing", listingId: listing.id, shareToEmail: email, sharedByCompanyName: myCompany?.company_name || "A Tankbridge user" }),
+        body: JSON.stringify({ type: "share_listing", listingId: listing.id, shareToEmail: email, sharedByName: myCompany?.contact_name || myCompany?.company_name || "A Tankbridge user" }),
       }).catch(() => null)
     ));
     setShareSending(false);
