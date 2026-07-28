@@ -1150,12 +1150,9 @@ export default function App() {
 
     const companyIds = [...new Set((data || []).filter(r => r.status === "approved" && r.company_id).map(r => r.company_id))];
     if (companyIds.length === 0) { setCompanyListingsMap({}); return; }
-    const { data: listingsData } = await supabase.from("listings").select("*").in("company_id", companyIds).eq("status", "active").order("created_at", { ascending: false });
+    const results = await Promise.all(companyIds.map(id => supabase.rpc("get_represented_company_listings", { p_company_id: id })));
     const map = {};
-    for (const l of listingsData || []) {
-      if (!map[l.company_id]) map[l.company_id] = [];
-      map[l.company_id].push(l);
-    }
+    companyIds.forEach((id, i) => { map[id] = results[i].data || []; });
     setCompanyListingsMap(map);
   }, [myCompany]);
 
