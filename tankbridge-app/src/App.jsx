@@ -732,6 +732,7 @@ export default function App() {
   const [showInactiveListings, setShowInactiveListings] = useState(false);
 
   const [myReferrals, setMyReferrals] = useState([]);
+  const [companyListingsMap, setCompanyListingsMap] = useState({});
   const [myBrokerCommissions, setMyBrokerCommissions] = useState([]);
   const [referralForm, setReferralForm] = useState(EMPTY_REFERRAL);
   const [referralError, setReferralError] = useState("");
@@ -1143,9 +1144,19 @@ export default function App() {
   }, [myCompany]);
 
   const loadMyReferrals = useCallback(async () => {
-    if (!myCompany) { setMyReferrals([]); return; }
+    if (!myCompany) { setMyReferrals([]); setCompanyListingsMap({}); return; }
     const { data } = await supabase.from("referrals").select("*").eq("broker_company_id", myCompany.id).order("created_at", { ascending: false });
     setMyReferrals(data || []);
+
+    const companyIds = [...new Set((data || []).filter(r => r.status === "approved" && r.company_id).map(r => r.company_id))];
+    if (companyIds.length === 0) { setCompanyListingsMap({}); return; }
+    const { data: listingsData } = await supabase.from("listings").select("*").in("company_id", companyIds).eq("status", "active").order("created_at", { ascending: false });
+    const map = {};
+    for (const l of listingsData || []) {
+      if (!map[l.company_id]) map[l.company_id] = [];
+      map[l.company_id].push(l);
+    }
+    setCompanyListingsMap(map);
   }, [myCompany]);
 
   const loadMyDocuments = useCallback(async () => {
@@ -2500,14 +2511,14 @@ export default function App() {
     window.open(data.signedUrl, "_blank");
   }
 
-  async function startEditBrokerListing(referral) {
-    const { data, error } = await supabase.from("listings").select("*").eq("id", referral.listing_id).maybeSingle();
+  async function startEditBrokerListing(listing) {
+    const { data, error } = await supabase.from("listings").select("*").eq("id", listing.id).maybeSingle();
     if (error || !data) { showToast("Could not load this listing.", "err"); return; }
     setBrokerListingForm({
       volume: String(data.volume), unitPrice: String(data.unit_price), location: data.location,
       terms: data.terms || [], bolTerms: data.bol_terms || "not_offered",
     });
-    setEditingBrokerListingId(referral.listing_id);
+    setEditingBrokerListingId(listing.id);
     setBrokerListingError("");
   }
 
@@ -2529,8 +2540,8 @@ export default function App() {
     showToast("Listing updated.");
   }
 
-  async function cancelBrokerListing(referral) {
-    const { error } = await supabase.from("listings").delete().eq("id", referral.listing_id);
+  async function cancelBrokerListing(listing) {
+    const { error } = await supabase.from("listings").delete().eq("id", listing.id);
     if (error) { showToast(error.message, "err"); return; }
     await loadMyReferrals();
     await loadMarketBoard();
@@ -4312,9 +4323,12 @@ export default function App() {
                           </div>
                         </div>
                       )}
-                      {r.status === "approved" && r.invite_status !== "accepted" && r.listing_id && (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
-                          {editingBrokerListingId === r.listing_id ? (
+                      {r.status === "approved" && r.invite_status !== "accepted" && r.company_id && (companyListingsMap[r.company_id] || []).map(listing => (
+                        <div key={listing.id} style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                          <div style={{ fontSize: 13, color: "var(--steel)", marginBottom: 6 }}>
+                            {listing.product} · {Number(listing.volume).toLocaleString()} ℓ · {listing.price_mode === "seller_offer" ? "Offer" : `R ${Number(listing.unit_price).toFixed(2)}/ℓ`} · {fmtTerms(listing.terms)} · {listing.location}
+                          </div>
+                          {editingBrokerListingId === listing.id ? (
                             <div>
                               {brokerListingError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {brokerListingError}</div>}
                               <div className="gnt-grid2">
@@ -4332,17 +4346,17 @@ export default function App() {
                             </div>
                           ) : (
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEditBrokerListing(r)}>Edit listing</button>
-                              <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { if (window.confirm("Cancel and remove this listing from the Market Board?")) cancelBrokerListing(r); }}>Cancel listing</button>
-                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(r.listing_id)}><Mail size={13} /> {shareTargetId === r.listing_id ? "Close" : "Share with someone you know"}</button>
+                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEditBrokerListing(listing)}>Edit listing</button>
+                              <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { if (window.confirm("Cancel and remove this listing from the Market Board?")) cancelBrokerListing(listing); }}>Cancel listing</button>
+                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(listing.id)}><Mail size={13} /> {shareTargetId === listing.id ? "Close" : "Share with someone you know"}</button>
                             </div>
                           )}
-                          {shareTargetId === r.listing_id && renderShareListingPanel({
-                            id: r.listing_id, kind: r.referred_type === "seller" ? "sell" : "buy", product: r.product,
-                            volume: r.volume, unit_price: r.unit_price, price_mode: "fixed", terms: r.terms, location: r.location,
-                          })}
+                          {shareTargetId === listing.id && renderShareListingPanel(listing)}
                           <p className="hint" style={{ marginTop: 6 }}>You can manage this listing until {r.referred_company_name} completes their own registration — after that, it's under their control.</p>
                         </div>
+                      ))}
+                      {r.status === "approved" && r.invite_status !== "accepted" && r.company_id && (companyListingsMap[r.company_id] || []).length === 0 && (
+                        <p className="hint" style={{ marginTop: 10 }}>No active listings for {r.referred_company_name} right now.</p>
                       )}
                       {r.status === "approved" && r.invite_status !== "accepted" && r.company_id && (
                         <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
