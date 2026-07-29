@@ -109,7 +109,7 @@ const EMPTY_REG = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
 };
-const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed" };
+const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed", validUntil: "", whileStockLasts: false };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
@@ -153,6 +153,26 @@ function TermsCheckboxGroup({ value, onChange }) {
           {t}
         </label>
       ))}
+    </div>
+  );
+}
+
+// Optional listing validity: either a specific date, or "while stock lasts".
+// Leaving both blank means no expiry is stated (today's default behaviour).
+function ValidityFields({ validUntil, whileStockLasts, onValidUntilChange, onWhileStockLastsChange }) {
+  return (
+    <div className="gnt-field">
+      <label>Listing valid until (optional)</label>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400, fontSize: 13.5, marginBottom: 8, cursor: "pointer" }}>
+        <input
+          type="checkbox" checked={!!whileStockLasts}
+          onChange={e => { onWhileStockLastsChange(e.target.checked); if (e.target.checked) onValidUntilChange(""); }}
+        />
+        While stock lasts
+      </label>
+      {!whileStockLasts && (
+        <input type="date" value={validUntil || ""} onChange={e => onValidUntilChange(e.target.value)} />
+      )}
     </div>
   );
 }
@@ -1522,6 +1542,8 @@ export default function App() {
       notes: listingForm.notes,
       procedures: listingForm.procedures,
       bol_terms: listingForm.bolTerms,
+      valid_until: listingForm.validUntil || null,
+      while_stock_lasts: listingForm.whileStockLasts,
       status: "active", // this form is only reachable once the company is already approved
     }).select().single();
     if (error) { setListingError(error.message); return; }
@@ -1557,6 +1579,8 @@ export default function App() {
       notes: editingListing.notes,
       procedures: editingListing.procedures || {},
       bol_terms: editingListing.bol_terms || "not_offered",
+      valid_until: editingListing.valid_until || null,
+      while_stock_lasts: editingListing.while_stock_lasts || false,
     }).eq("id", editingListing.id);
     if (error) { setEditError(error.message); return; }
     setEditingListing(null);
@@ -2505,12 +2529,11 @@ export default function App() {
     window.open(data.signedUrl, "_blank");
   }
 
-  async function startEditBrokerListing(listing) {
-    const { data, error } = await supabase.from("listings").select("*").eq("id", listing.id).maybeSingle();
-    if (error || !data) { showToast("Could not load this listing.", "err"); return; }
+  function startEditBrokerListing(listing) {
     setBrokerListingForm({
-      volume: String(data.volume), unitPrice: String(data.unit_price), location: data.location,
-      terms: data.terms || [], bolTerms: data.bol_terms || "not_offered",
+      volume: String(listing.volume), unitPrice: String(listing.unit_price), location: listing.location,
+      terms: listing.terms || [], bolTerms: listing.bol_terms || "not_offered",
+      validUntil: listing.valid_until || "", whileStockLasts: listing.while_stock_lasts || false,
     });
     setEditingBrokerListingId(listing.id);
     setBrokerListingError("");
@@ -2525,6 +2548,7 @@ export default function App() {
     const { error } = await supabase.from("listings").update({
       volume: Number(f.volume), unit_price: Number(f.unitPrice), location: f.location,
       terms: f.terms, bol_terms: f.bolTerms,
+      valid_until: f.validUntil || null, while_stock_lasts: f.whileStockLasts,
     }).eq("id", editingBrokerListingId);
     if (error) { setBrokerListingError(error.message); return; }
     setEditingBrokerListingId(null);
@@ -2545,7 +2569,7 @@ export default function App() {
   function startAddBrokerListing(referral) {
     setNewBrokerListingForm({
       product: referral.product || PRODUCTS[0], volume: "", unitPrice: "", location: referral.location || "",
-      availability: "", terms: [], bolTerms: "not_offered",
+      availability: "", terms: [], bolTerms: "not_offered", validUntil: "", whileStockLasts: false,
     });
     setAddingListingReferralId(referral.id);
     setNewBrokerListingError("");
@@ -2573,6 +2597,8 @@ export default function App() {
       p_location: f.location,
       p_availability: f.availability,
       p_bol_terms: f.bolTerms,
+      p_valid_until: f.validUntil || null,
+      p_while_stock_lasts: f.whileStockLasts,
     });
     if (error) { setNewBrokerListingError(error.message); return; }
     cancelAddBrokerListing();
@@ -3900,6 +3926,10 @@ export default function App() {
                     <div className="gnt-grid2">
                       <div className="gnt-field"><label>Location</label><input value={listingForm.location} onChange={e => updateListingField("location", e.target.value)} placeholder="e.g. Durban, Lesedi, Secunda" /></div>
                       <div className="gnt-field"><label>Availability</label><input value={listingForm.availability} onChange={e => updateListingField("availability", e.target.value)} placeholder="e.g. Immediate / 48 hrs" /></div>
+                      <ValidityFields
+                        validUntil={listingForm.validUntil} whileStockLasts={listingForm.whileStockLasts}
+                        onValidUntilChange={v => updateListingField("validUntil", v)} onWhileStockLastsChange={v => updateListingField("whileStockLasts", v)}
+                      />
                     </div>
                     <div className="gnt-field"><label>Notes (optional)</label><textarea rows={2} value={listingForm.notes} onChange={e => updateListingField("notes", e.target.value)} /></div>
                     <div className="gnt-field">
@@ -3959,6 +3989,10 @@ export default function App() {
                             ))}
                           </select>
                         </div>
+                        <ValidityFields
+                          validUntil={editingListing.valid_until} whileStockLasts={editingListing.while_stock_lasts}
+                          onValidUntilChange={v => updateEditField("valid_until", v)} onWhileStockLastsChange={v => updateEditField("while_stock_lasts", v)}
+                        />
                         <div style={{ display: "flex", gap: 10 }}>
                           <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit">Save</button>
                           <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={cancelEdit}>Cancel</button>
@@ -4333,6 +4367,10 @@ export default function App() {
                               <div className="gnt-field"><label>Terms</label>
                                 <TermsCheckboxGroup value={brokerListingForm.terms} onChange={v => setBrokerListingForm(f => ({ ...f, terms: v }))} />
                               </div>
+                              <ValidityFields
+                                validUntil={brokerListingForm.validUntil} whileStockLasts={brokerListingForm.whileStockLasts}
+                                onValidUntilChange={v => setBrokerListingForm(f => ({ ...f, validUntil: v }))} onWhileStockLastsChange={v => setBrokerListingForm(f => ({ ...f, whileStockLasts: v }))}
+                              />
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                 <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={saveBrokerListingEdit}>Save</button>
                                 <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setEditingBrokerListingId(null); setBrokerListingForm(null); }}>Cancel edit</button>
@@ -4368,6 +4406,10 @@ export default function App() {
                               </div>
                               <div className="gnt-field"><label>Location</label><input value={newBrokerListingForm.location} onChange={e => setNewBrokerListingForm(f => ({ ...f, location: e.target.value }))} /></div>
                               <div className="gnt-field"><label>Availability</label><input value={newBrokerListingForm.availability} onChange={e => setNewBrokerListingForm(f => ({ ...f, availability: e.target.value }))} placeholder="e.g. Immediate / 48 hrs" /></div>
+                              <ValidityFields
+                                validUntil={newBrokerListingForm.validUntil} whileStockLasts={newBrokerListingForm.whileStockLasts}
+                                onValidUntilChange={v => setNewBrokerListingForm(f => ({ ...f, validUntil: v }))} onWhileStockLastsChange={v => setNewBrokerListingForm(f => ({ ...f, whileStockLasts: v }))}
+                              />
                               <div className="gnt-field"><label>Terms</label>
                                 <TermsCheckboxGroup value={newBrokerListingForm.terms} onChange={v => setNewBrokerListingForm(f => ({ ...f, terms: v }))} />
                               </div>
@@ -4476,6 +4518,8 @@ export default function App() {
                     <span><Truck size={13} /> {Number(l.volume).toLocaleString()} ℓ</span>
                     <span><MapPin size={13} /> {l.location}</span>
                     <span><Clock size={13} /> {l.availability}</span>
+                    {l.while_stock_lasts && <span style={{ color: "var(--amber-dark)", fontWeight: 600 }}>While stock lasts</span>}
+                    {!l.while_stock_lasts && l.valid_until && <span style={{ color: "var(--amber-dark)", fontWeight: 600 }}>Valid until {new Date(l.valid_until).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" })}</span>}
                   </div>
                   {l.notes && <p style={{ fontSize: 13, color: "var(--steel)" }}>{l.notes}</p>}
                 </div>
