@@ -2023,43 +2023,40 @@ export default function App() {
   function renderShareListingPanel(listing) {
     return (
       <div style={{ marginTop: 10 }}>
-        {shareSentOk ? (
-          <p style={{ fontSize: 13, color: "var(--steel)" }}>Sent — they'll get an email with this listing's details.</p>
-        ) : (
-          <>
-            <p className="hint" style={{ marginBottom: 8 }}>Know a buyer or seller who'd want this? Send it straight to them instead of waiting for them to spot it.</p>
-            {shareEmails.map((email, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                <input
-                  type="email" placeholder="their@email.co.za" style={{ width: 220 }}
-                  value={email}
-                  onChange={e => setShareEmails(arr => arr.map((v, idx) => idx === i ? e.target.value : v))}
-                />
-                {shareEmails.length > 1 && (
-                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShareEmails(arr => arr.filter((_, idx) => idx !== i))}>Remove</button>
-                )}
-              </div>
-            ))}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              {shareEmails.length < 3 && (
-                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShareEmails(arr => [...arr, ""])}>+ Add another email (up to 3)</button>
-              )}
-              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={shareSending} onClick={() => submitShareListingEmail(listing)}>{shareSending ? "Sending…" : "Send email"}</button>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
-              <input type="tel" placeholder="Their WhatsApp number (optional)" style={{ width: 220 }} value={sharePhone} onChange={e => setSharePhone(e.target.value)} />
-              <a className="gnt-btn gnt-btn-ghost gnt-btn-sm" href={shareListingWhatsAppLink(listing)} target="_blank" rel="noreferrer">Share via WhatsApp</a>
-            </div>
-          </>
-        )}
+        <p className="hint" style={{ marginBottom: 8 }}>Know a buyer or seller who'd want this? Send it straight to them instead of waiting for them to spot it.</p>
+        {shareEmails.map((email, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <input
+              type="email" placeholder="their@email.co.za" style={{ width: 220 }}
+              value={email}
+              onChange={e => { setShareEmails(arr => arr.map((v, idx) => idx === i ? e.target.value : v)); setShareSentOk(false); }}
+            />
+            {shareEmails.length > 1 && (
+              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShareEmails(arr => arr.filter((_, idx) => idx !== i))}>Remove</button>
+            )}
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {shareEmails.length < 3 && (
+            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={() => setShareEmails(arr => [...arr, ""])}>+ Add another email (up to 3)</button>
+          )}
+          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={shareSending} onClick={() => submitShareListingEmail(listing)}>{shareSending ? "Sending…" : "Send email"}</button>
+          {shareSentOk && <span style={{ fontSize: 12.5, color: "#3f6b52", fontWeight: 600 }}>✓ Sent — you can send to someone else anytime</span>}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+          <input type="tel" placeholder="Their WhatsApp number (optional)" style={{ width: 220 }} value={sharePhone} onChange={e => setSharePhone(e.target.value)} />
+          <a className="gnt-btn gnt-btn-ghost gnt-btn-sm" href={shareListingWhatsAppLink(listing)} target="_blank" rel="noreferrer">Share via WhatsApp</a>
+        </div>
       </div>
     );
   }
 
 
   function toggleShareListing(listingId) {
-    setShareTargetId(prev => prev === listingId ? null : listingId);
-    setShareEmails([""]); setSharePhone(""); setShareSentOk(false);
+    setShareTargetId(prev => {
+      if (prev !== listingId) { setShareEmails([""]); setSharePhone(""); setShareSentOk(false); }
+      return listingId;
+    });
   }
 
   async function submitShareListingEmail(listing) {
@@ -3995,7 +3992,7 @@ export default function App() {
                                 <div style={{ display: "flex", gap: 8 }}>
                                   <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEdit(l)}>Edit</button>
                                   <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => deleteListing(l.id)}>Remove</button>
-                                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(l.id)}><Mail size={13} /> {shareTargetId === l.id ? "Close" : "Share with someone you know"}</button>
+                                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(l.id)}><Mail size={13} /> Share with someone you know</button>
                                 </div>
                                 {shareTargetId === l.id && renderShareListingPanel(l)}
                               </>
@@ -4345,7 +4342,7 @@ export default function App() {
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                               <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => startEditBrokerListing(listing)}>Edit listing</button>
                               <button className="gnt-btn gnt-btn-danger gnt-btn-sm" onClick={() => { if (window.confirm("Cancel and remove this listing from the Market Board?")) cancelBrokerListing(listing); }}>Cancel listing</button>
-                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(listing.id)}><Mail size={13} /> {shareTargetId === listing.id ? "Close" : "Share with someone you know"}</button>
+                              <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => toggleShareListing(listing.id)}><Mail size={13} /> Share with someone you know</button>
                             </div>
                           )}
                           {shareTargetId === listing.id && renderShareListingPanel(listing)}
