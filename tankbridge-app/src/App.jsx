@@ -165,7 +165,7 @@ function ValidityFields({ validUntil, whileStockLasts, onValidUntilChange, onWhi
       <label>Listing valid until (optional)</label>
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400, fontSize: 13.5, marginBottom: 8, cursor: "pointer" }}>
         <input
-          type="checkbox" checked={!!whileStockLasts}
+          type="checkbox" checked={!!whileStockLasts} style={{ width: "auto", flexShrink: 0 }}
           onChange={e => { onWhileStockLastsChange(e.target.checked); if (e.target.checked) onValidUntilChange(""); }}
         />
         While stock lasts
@@ -2545,11 +2545,11 @@ export default function App() {
       setBrokerListingError("Please complete all fields and select at least one term."); return;
     }
     if (Number(f.volume) < 40000) { setBrokerListingError("Minimum tradable volume is 40,000 litres."); return; }
-    const { error } = await supabase.from("listings").update({
-      volume: Number(f.volume), unit_price: Number(f.unitPrice), location: f.location,
-      terms: f.terms, bol_terms: f.bolTerms,
-      valid_until: f.validUntil || null, while_stock_lasts: f.whileStockLasts,
-    }).eq("id", editingBrokerListingId);
+    const { error } = await supabase.rpc("update_represented_listing", {
+      p_listing_id: editingBrokerListingId, p_volume: Number(f.volume), p_unit_price: Number(f.unitPrice),
+      p_location: f.location, p_terms: f.terms, p_bol_terms: f.bolTerms,
+      p_valid_until: f.validUntil || null, p_while_stock_lasts: f.whileStockLasts,
+    });
     if (error) { setBrokerListingError(error.message); return; }
     setEditingBrokerListingId(null);
     setBrokerListingForm(null);
@@ -2559,7 +2559,7 @@ export default function App() {
   }
 
   async function cancelBrokerListing(listing) {
-    const { error } = await supabase.from("listings").delete().eq("id", listing.id);
+    const { error } = await supabase.rpc("cancel_represented_listing", { p_listing_id: listing.id });
     if (error) { showToast(error.message, "err"); return; }
     await loadMyReferrals();
     await loadMarketBoard();
