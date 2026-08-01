@@ -830,16 +830,19 @@ export default function App() {
   const [offerRepresented, setOfferRepresented] = useState("");
   const [offerCommission, setOfferCommission] = useState("");
   const [offerSharePct, setOfferSharePct] = useState("");
+  const [offerDirectSourced, setOfferDirectSourced] = useState(false);
   const [myRepresentedSellerCompanies, setMyRepresentedSellerCompanies] = useState([]);
   const [myOffers, setMyOffers] = useState([]);
   const [offerCounterInputs, setOfferCounterInputs] = useState({});
   const [offerCommissionInputs, setOfferCommissionInputs] = useState({});
   const [offerShareInputs, setOfferShareInputs] = useState({});
+  const [offerDirectSourcedInputs, setOfferDirectSourcedInputs] = useState({});
   const [counterTarget, setCounterTarget] = useState(null);
   const [counterPrice, setCounterPrice] = useState("");
   const [counterCommission, setCounterCommission] = useState("");
   const [counterRepresented, setCounterRepresented] = useState("");
   const [counterSharePct, setCounterSharePct] = useState("");
+  const [counterDirectSourced, setCounterDirectSourced] = useState(false);
   const [counterError, setCounterError] = useState("");
   const [counterSubmitting, setCounterSubmitting] = useState(false);
   const [myRepresentedCompanies, setMyRepresentedCompanies] = useState([]);
@@ -1905,6 +1908,7 @@ export default function App() {
     setOfferRepresented("");
     setOfferCommission("");
     setOfferSharePct("");
+    setOfferDirectSourced(false);
     if (session) {
       const { data } = await supabase.rpc("get_my_represented_companies");
       setMyRepresentedSellerCompanies((data || []).filter(c => c.type === "seller"));
@@ -1922,6 +1926,7 @@ export default function App() {
       p_commission_rate: offerRepresented && offerCommission ? centsFieldToRand(offerCommission) : null,
       p_represented_company_id: offerRepresented || null,
       p_my_share_pct: offerRepresented && offerSharePct !== "" ? Number(offerSharePct) / 100 : null,
+      p_direct_sourced: offerRepresented ? offerDirectSourced : false,
     });
     setOfferSubmitting(false);
     if (error) { setOfferError(error.message); return; }
@@ -1974,7 +1979,13 @@ export default function App() {
                         {isDelegate && (
                           <input type="number" min="0" max="70" step="1" placeholder="My share % (0-70)" style={{ width: 140 }} value={offerShareInputs[counterKey] || ""} onChange={e => setOfferShareInputs(m => ({ ...m, [counterKey]: e.target.value }))} />
                         )}
-                        <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey], offerShareInputs[counterKey])}>
+                        {isDelegate && (
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                            <input type="checkbox" style={{ width: "auto", flexShrink: 0 }} checked={!!offerDirectSourcedInputs[counterKey]} onChange={e => setOfferDirectSourcedInputs(m => ({ ...m, [counterKey]: e.target.checked }))} />
+                            I introduced both sides
+                          </label>
+                        )}
+                        <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={offerActionBusy === o.id + "counter"} onClick={() => respondToOffer(o.id, "counter", offerCounterInputs[counterKey], offerCommissionInputs[counterKey], offerShareInputs[counterKey], offerDirectSourcedInputs[counterKey])}>
                           {offerActionBusy === o.id + "counter" ? "Sending…" : "Counter"}
                         </button>
                       </>
@@ -2018,13 +2029,14 @@ export default function App() {
     );
   }
 
-  async function respondToOffer(offerId, action, priceValue, commissionValue, sharePctValue) {
+  async function respondToOffer(offerId, action, priceValue, commissionValue, sharePctValue, directSourcedValue) {
     setOfferActionBusy(offerId + action);
     const { data, error } = await supabase.rpc("respond_to_offer", {
       p_offer_id: offerId, p_action: action,
       p_price: priceValue ? Number(priceValue) : null,
       p_commission_rate: commissionValue ? centsFieldToRand(commissionValue) : null,
       p_my_share_pct: sharePctValue !== undefined && sharePctValue !== "" ? Number(sharePctValue) / 100 : null,
+      p_direct_sourced: directSourcedValue !== undefined ? !!directSourcedValue : null,
     });
     setOfferActionBusy(null);
     if (error) { showToast(error.message, "err"); return; }
@@ -2113,6 +2125,7 @@ export default function App() {
     setCounterCommission("");
     setCounterRepresented("");
     setCounterSharePct("");
+    setCounterDirectSourced(false);
     setCounterError("");
     if (session) {
       const { data } = await supabase.rpc("get_my_represented_companies");
@@ -2132,6 +2145,7 @@ export default function App() {
       p_commission_rate: counterCommission ? centsFieldToRand(counterCommission) : null,
       p_represented_company_id: counterRepresented || null,
       p_my_share_pct: counterRepresented && counterSharePct !== "" ? Number(counterSharePct) / 100 : null,
+      p_direct_sourced: counterRepresented ? counterDirectSourced : false,
     });
     setCounterSubmitting(false);
     if (error) { setCounterError(error.message); return; }
@@ -3227,6 +3241,16 @@ export default function App() {
           <section style={{ background: "var(--ink)", margin: "0 -20px", padding: "36px 20px" }}>
             <div style={{ maxWidth: 900, margin: "0 auto" }}>
               <h2 style={{ fontSize: 22, marginBottom: 16, color: "var(--paper)" }}>For brokers — introduce once, get paid every time it closes</h2>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
+                <div style={{ flex: "1 1 260px", background: "rgba(236,232,222,0.06)", border: "1px solid rgba(236,232,222,0.15)", padding: "20px 22px" }}>
+                  <h3 style={{ fontSize: 17, color: "var(--paper)", marginBottom: 6 }}>Got a seller? Got a buyer?</h3>
+                  <p style={{ fontSize: 13.5, color: "var(--paper-dark)" }}>Introduce them — platform fee is just 10%.</p>
+                </div>
+                <div style={{ flex: "1 1 260px", background: "rgba(236,232,222,0.06)", border: "1px solid rgba(236,232,222,0.15)", padding: "20px 22px" }}>
+                  <h3 style={{ fontSize: 17, color: "var(--paper)", marginBottom: 6 }}>Haven't found a match yet?</h3>
+                  <p style={{ fontSize: 13.5, color: "var(--paper-dark)" }}>Post it — up to 70% instead of the usual 50%.</p>
+                </div>
+              </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>01</span>
@@ -5094,6 +5118,10 @@ export default function App() {
                   <>
                     <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
                     <div className="gnt-field"><label>My share of the 70% broker pool, % (optional — leave blank for the standard split)</label><input type="number" min="0" max="70" step="1" value={counterSharePct} onChange={e => setCounterSharePct(e.target.value)} placeholder="e.g. 0 if you're not taking a fee" /></div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 400, marginBottom: 16, cursor: "pointer" }}>
+                      <input type="checkbox" style={{ width: "auto", flexShrink: 0 }} checked={counterDirectSourced} onChange={e => setCounterDirectSourced(e.target.checked)} />
+                      I introduced both sides myself — platform fee drops to 10%, broker pool up to 90%
+                    </label>
                   </>
                 )}
                 <p className="hint" style={{ marginBottom: 12 }}>The other party can accept, counter back, or decline (up to 2 rounds each). Track this from "My negotiations" on your Dashboard.</p>
@@ -5162,6 +5190,10 @@ export default function App() {
                   <>
                     <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={offerCommission} onChange={e => setOfferCommission(e.target.value)} /></div>
                     <div className="gnt-field"><label>My share of the 70% broker pool, % (optional — leave blank for the standard split)</label><input type="number" min="0" max="70" step="1" value={offerSharePct} onChange={e => setOfferSharePct(e.target.value)} placeholder="e.g. 0 if you're not taking a fee" /></div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 400, marginBottom: 16, cursor: "pointer" }}>
+                      <input type="checkbox" style={{ width: "auto", flexShrink: 0 }} checked={offerDirectSourced} onChange={e => setOfferDirectSourced(e.target.checked)} />
+                      I introduced both sides myself — platform fee drops to 10%, broker pool up to 90%
+                    </label>
                   </>
                 )}
                 <p className="hint" style={{ marginBottom: 12 }}>The buyer can accept or counter (up to 2 rounds each). If not accepted after that, the negotiation falls through.</p>
