@@ -26,7 +26,7 @@ const HOW_IT_HELPS = {
     { num: "01", title: "Register & get approved", body: "Sign up as a broker or mandate holder. Tankbridge admin reviews and approves you once.", benefit: "One-time approval, then refer as many deals as you can find." },
     { num: "02", title: "Introduce a buyer or seller", body: "Know a company directly? Enter what you have. Don't, but know who does? Hand off to their actual mandate.", benefit: "Your introduction is timestamped and logged before either side ever sees a name — your claim is protected from day one." },
     { num: "03", title: "Negotiate on their behalf", body: "If authorised as a mandate, counter price and commission split in real time, with a live payout preview.", benefit: "You can actively work the deal, not just wait on the sidelines for a yes." },
-    { num: "04", title: "Deal closes, you're paid directly", body: "Your commission share pays out through an independent third-party escrow, straight to you.", benefit: "Platform fee is 30% on matched deals — but drops to just 10% if you introduced both sides yourself. No chasing payment through Tankbridge or the other side's broker — escrow pays everyone at once." },
+    { num: "04", title: "Deal closes, you're paid directly", body: "Your commission share pays out through an independent third-party escrow, straight to you.", benefit: "You keep up to 70% of the commission on matched deals — up to 90% if you introduced both sides yourself. No chasing payment through Tankbridge or the other side's broker — escrow pays everyone at once." },
     { num: "05", title: "Covered for 24 months", body: "Every relationship you introduce is automatically tracked for 24 months, even across repeat deals.", benefit: "If they trade again without a new referral, your commission still applies automatically." },
   ],
 };
@@ -157,7 +157,47 @@ function TermsCheckboxGroup({ value, onChange }) {
   );
 }
 
-// Optional listing validity: either a specific date, or "while stock lasts".
+// Shows the estimated commission pool split across the 4 scenarios a
+// Mandate might land in, based on the commission rate (cents/L) they're
+// about to propose and the listing's volume. Renders nothing until a valid
+// commission rate is entered.
+function CommissionEstimateTable({ commissionCents, volume }) {
+  const rate = Number(commissionCents);
+  const vol = Number(volume);
+  if (!rate || rate <= 0 || !vol) return null;
+  const totalPool = (rate / 100) * vol;
+  const rows = [
+    { label: "I'm the Mandate", direct: totalPool * 0.90, directPct: "up to 90%", matched: totalPool * 0.70, matchedPct: "up to 70%" },
+    { label: "Mandate on the other side too", direct: totalPool * 0.45, directPct: "default 45%", matched: totalPool * 0.35, matchedPct: "default 35%" },
+  ];
+  return (
+    <div style={{ margin: "4px 0 16px", border: "1px solid var(--line)", background: "var(--panel)" }}>
+      <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--steel)", borderBottom: "1px solid var(--line)" }}>
+        Total commission pool: <strong>{fmtMoney(totalPool)}</strong> ({rate}c × {vol.toLocaleString()}ℓ)
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 600, color: "var(--steel)" }}></th>
+            <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 600, color: "var(--steel)" }}>Direct-sourced</th>
+            <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 600, color: "var(--steel)" }}>Tankbridge matched</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.label} style={{ borderTop: "1px solid var(--line)" }}>
+              <td style={{ padding: "8px 12px", color: "var(--steel)" }}>{r.label}</td>
+              <td style={{ padding: "8px 12px", fontWeight: 600 }}>{fmtMoney(r.direct)} <span style={{ fontWeight: 400, color: "var(--steel-soft)" }}>({r.directPct})</span></td>
+              <td style={{ padding: "8px 12px", fontWeight: 600 }}>{fmtMoney(r.matched)} <span style={{ fontWeight: 400, color: "var(--steel-soft)" }}>({r.matchedPct})</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
 // Leaving both blank means no expiry is stated (today's default behaviour).
 function ValidityFields({ validUntil, whileStockLasts, onValidUntilChange, onWhileStockLastsChange }) {
   return (
@@ -5231,6 +5271,7 @@ export default function App() {
                 {counterRepresented && (
                   <>
                     <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={counterCommission} onChange={e => setCounterCommission(e.target.value)} /></div>
+                    <CommissionEstimateTable commissionCents={counterCommission} volume={counterTarget?.volume} />
                     <div className="gnt-field"><label>My share of the 70% broker pool, % (optional — leave blank for the standard split)</label><input type="number" min="0" max="70" step="1" value={counterSharePct} onChange={e => setCounterSharePct(e.target.value)} placeholder="e.g. 0 if you're not taking a fee" /></div>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 400, marginBottom: 16, cursor: "pointer" }}>
                       <input type="checkbox" style={{ width: "auto", flexShrink: 0 }} checked={counterDirectSourced} onChange={e => setCounterDirectSourced(e.target.checked)} />
@@ -5303,6 +5344,7 @@ export default function App() {
                 {offerRepresented && (
                   <>
                     <div className="gnt-field"><label>Commission, cents/litre (optional)</label><input type="number" min="0" step="1" value={offerCommission} onChange={e => setOfferCommission(e.target.value)} /></div>
+                    <CommissionEstimateTable commissionCents={offerCommission} volume={offerTarget?.volume} />
                     <div className="gnt-field"><label>My share of the 70% broker pool, % (optional — leave blank for the standard split)</label><input type="number" min="0" max="70" step="1" value={offerSharePct} onChange={e => setOfferSharePct(e.target.value)} placeholder="e.g. 0 if you're not taking a fee" /></div>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 400, marginBottom: 16, cursor: "pointer" }}>
                       <input type="checkbox" style={{ width: "auto", flexShrink: 0 }} checked={offerDirectSourced} onChange={e => setOfferDirectSourced(e.target.checked)} />
