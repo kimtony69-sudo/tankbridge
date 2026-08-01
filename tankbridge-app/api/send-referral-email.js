@@ -1,281 +1,102 @@
-// This runs on Vercel as a serverless function at /api/send-referral-email
-// Consolidates referral-related emails into one endpoint (Vercel Hobby plan
-// caps serverless functions at 12).
-//
-// POST body: { type, referralId, reason? }
-//
-// - "invite": referred buyer/seller registration invite (after admin approval)
-// - "confirm": seller price/commission confirmation (no login required)
-// - "co_broker_claim": upstream broker/mandate relationship confirmation
-// - "admin_new_referral": tells admin a new referral needs review
-// - "rejected": tells the submitting broker/mandate their referral was rejected (with reason)
-// - "split_dispute": tells the originating broker a Mandate disputed the commission split
-// - "split_dispute_resolved": tells the Mandate whether the originating broker agreed or not
+-- ============================== Migration #64 ==============================
+-- ============================================================================
+-- TANKBRIDGE — Migration #64
+-- New "representation confirmation" check, separate from the existing
+-- seller price-confirmation and hand-off claim flows. Fires the first time
+-- a REAL counterparty (a different company) engages a "I know them
+-- directly" referred company's listing (buyer or seller, whichever side)
+-- with an offer or counter — at that point, we email the referred company
+-- at the address the referring broker gave, asking them to confirm this
+-- broker actually represents them. Non-blocking (informational) for now —
+-- it does not stop the negotiation, but flags unconfirmed/rejected
+-- representation for admin review.
+-- Supabase Dashboard → SQL Editor → New query → 전체 붙여넣고 Run
+-- ============================================================================
 
-async function sendResendEmail({ to, subject, html }) {
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: process.env.NOTIFY_FROM_EMAIL || "Tankbridge <onboarding@resend.dev>",
-      to,
-      subject,
-      html,
-    }),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error("Resend error:", errText);
-    throw new Error(errText);
-  }
-}
+alter table public.referrals add column if not exists rep_confirm_status text
+  check (rep_confirm_status in ('pending', 'confirmed', 'rejected'));
+alter table public.referrals add column if not exists rep_confirm_token uuid default gen_random_uuid();
+alter table public.referrals add column if not exists rep_confirm_reason text;
+alter table public.referrals add column if not exists rep_confirm_email_status text;
+alter table public.referrals add column if not exists rep_confirm_email_sent_at timestamptz;
+alter table public.referrals add column if not exists rep_confirm_email_error text;
 
-async function sbFetch(path, serviceKey, supabaseUrl) {
-  const res = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
-    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
-  });
-  return res.json();
-}
+create index if not exists idx_referrals_rep_confirm_token on public.referrals(rep_confirm_token);
 
-async function sbPatch(path, body, serviceKey, supabaseUrl) {
-  await fetch(`${supabaseUrl}/rest/v1/${path}`, {
-    method: "PATCH",
-    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-    body: JSON.stringify(body),
-  });
-}
+-- trigger_rep_confirm_if_needed(): called right after a real counterparty
+-- submits their first offer/counter on a directly-registered company's
+-- listing. Finds the matching "I know them directly" referral for that
+-- company (claiming_broker_id is null — hand-off referrals already have
+-- their own verified claim flow and are skipped) and flips it to 'pending'
+-- the first time this happens. Returns what the caller needs to send the
+-- confirmation email; does nothing (should_send = false) if there's no such
+-- referral, or one is already pending/resolved.
+create or replace function public.trigger_rep_confirm_if_needed(p_company_id uuid)
+returns table (should_send boolean, referral_id uuid, token uuid, contact_email text, broker_name text, referred_company_name text, referred_type text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_referral public.referrals%rowtype;
+  v_broker public.companies%rowtype;
+begin
+  select r.* into v_referral from public.referrals r
+    where r.company_id = p_company_id and r.claiming_broker_id is null and r.status = 'approved'
+    order by r.created_at desc limit 1;
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if not found or v_referral.rep_confirm_status is not null or coalesce(nullif(v_referral.referred_email, ''), '') = '' then
+    return query select false, null::uuid, null::uuid, null::text, null::text, null::text, null::text;
+    return;
+  end if;
 
-  const { type, referralId, reason } = req.body || {};
-  if (!referralId) return res.status(400).json({ error: "Missing referralId" });
-  if (!["invite", "confirm", "co_broker_claim", "admin_new_referral", "rejected", "split_dispute", "split_dispute_resolved"].includes(type)) {
-    return res.status(400).json({ error: "Invalid type" });
-  }
+  update public.referrals set rep_confirm_status = 'pending' where id = v_referral.id;
+  select * into v_broker from public.companies where id = v_referral.broker_company_id;
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return query select true, v_referral.id, v_referral.rep_confirm_token, v_referral.referred_email,
+                      coalesce(v_broker.company_name, 'A broker'), v_referral.referred_company_name, v_referral.referred_type;
+end;
+$$;
+grant execute on function public.trigger_rep_confirm_if_needed(uuid) to authenticated;
 
-  try {
-    const referral = (await sbFetch(`referrals?id=eq.${referralId}&select=*`, serviceKey, supabaseUrl))?.[0];
-    if (!referral) return res.status(404).json({ error: "Referral not found" });
+-- get_rep_confirm_by_token(): for the public confirm/reject page (no login).
+create or replace function public.get_rep_confirm_by_token(p_token uuid)
+returns table (id uuid, referred_type text, referred_company_name text, broker_name text, rep_confirm_status text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+    select r.id, r.referred_type, r.referred_company_name, coalesce(b.company_name, 'A broker'), r.rep_confirm_status
+    from public.referrals r left join public.companies b on b.id = r.broker_company_id
+    where r.rep_confirm_token = p_token;
+end;
+$$;
+grant execute on function public.get_rep_confirm_by_token(uuid) to anon, authenticated;
 
-    const broker = (await sbFetch(`companies?id=eq.${referral.broker_company_id}&select=company_name,email`, serviceKey, supabaseUrl))?.[0];
-    const terms = Array.isArray(referral.terms) ? referral.terms.join(" / ") : referral.terms;
+-- confirm_rep(): the referred company confirms or denies the broker
+-- actually represents them, via the emailed magic link (no login needed).
+create or replace function public.confirm_rep(p_token uuid, p_confirmed boolean, p_reason text default null)
+returns public.referrals
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_referral public.referrals%rowtype;
+begin
+  select * into v_referral from public.referrals where rep_confirm_token = p_token;
+  if not found then raise exception 'Invalid or expired link.'; end if;
+  if v_referral.rep_confirm_status <> 'pending' then raise exception 'This has already been responded to.'; end if;
 
-    if (type === "admin_new_referral") {
-      const label = referral.is_co_broker_referral ? "hand-off (mandate)" : "direct";
-      await sendResendEmail({
-        to: process.env.ADMIN_EMAIL,
-        subject: `New referral submitted — ${referral.referred_company_name || "(mandate handoff)"} (${referral.referred_type})`,
-        html: `
-          <h2>New referral needs review</h2>
-          <p><strong>${broker?.company_name || "A broker"}</strong> submitted a ${label} referral for a <strong>${referral.referred_type}</strong>:</p>
-          <p><strong>Company (as best known):</strong> ${referral.referred_company_name || "-"}</p>
-          <p><strong>Product:</strong> ${referral.product}</p>
-          <p><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
-          <p><strong>Price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
-          <p><strong>Terms:</strong> ${terms}</p>
-          <p><strong>Location:</strong> ${referral.location}</p>
-          <p><a href="https://tankbridge.co.za/#admin">Open the Admin dashboard to review</a></p>
-        `,
-      });
-      return res.status(200).json({ ok: true });
-    }
+  update public.referrals set
+    rep_confirm_status = case when p_confirmed then 'confirmed' else 'rejected' end,
+    rep_confirm_reason = case when p_confirmed then null else p_reason end
+  where id = v_referral.id
+  returning * into v_referral;
 
-    if (type === "rejected") {
-      if (!broker?.email || broker.email === "-") return res.status(200).json({ ok: true, skipped: true });
-      await sendResendEmail({
-        to: broker.email,
-        subject: `Your referral wasn't approved — ${referral.referred_company_name || referral.referred_type}`,
-        html: `
-          <h2>Your referral was not approved</h2>
-          <p>Hi ${broker.company_name},</p>
-          <p>Your referral for <strong>${referral.referred_company_name || `a ${referral.referred_type}`}</strong> (${referral.product}, ${Number(referral.volume).toLocaleString()} litres) was reviewed by Tankbridge admin and was not approved.</p>
-          ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
-          <p>No details were shared with the referred party at this stage. Feel free to submit a corrected referral from your Dashboard, or contact admin with any questions.</p>
-        `,
-      });
-      return res.status(200).json({ ok: true });
-    }
-
-    if (type === "invite") {
-      if (referral.status !== "approved") return res.status(400).json({ error: "Referral is not approved yet." });
-      if (!referral.referred_email) return res.status(400).json({ error: "No email on file for the referred company — ask the broker for it first." });
-
-      const inviteUrl = `https://tankbridge.co.za/?invite=${referral.invite_token}`;
-      const roleLabel = referral.referred_type === "seller" ? "seller" : "buyer";
-
-      await sendResendEmail({
-        to: referral.referred_email,
-        subject: `You've been recommended for Tankbridge — South Africa's verified diesel marketplace`,
-        html: `
-          <h2>${broker?.company_name || "A trading partner"} thinks you'd be a good fit for Tankbridge</h2>
-          <p><strong>${broker?.company_name || "A broker"}</strong> has recommended <strong>${referral.referred_company_name}</strong> to join Tankbridge as a ${roleLabel}, based on the deal below.</p>
-          <div style="background:#f6f4ec;padding:14px 16px;margin:16px 0;">
-            <p style="margin:0 0 6px;font-weight:bold;">What Tankbridge is:</p>
-            <p style="margin:0;font-size:14px;">A verified B2B marketplace for bulk diesel — every counterparty is CIPC/DMRE-checked, identities stay anonymous until both sides agree on price, and it's completely free to register.</p>
-          </div>
-          <p><strong>The deal on the table:</strong></p>
-          <p>${referral.product} · ${Number(referral.volume).toLocaleString()} litres · R ${Number(referral.unit_price).toFixed(2)}/litre · ${referral.location}</p>
-          <p>Setting up your account takes a couple of minutes — choose your own password, confirm your details, and you're live on the Market Board.</p>
-          <p style="margin-top:20px;">
-            <a href="${inviteUrl}" style="background:#e39a2d;color:#101b28;padding:12px 20px;text-decoration:none;font-weight:bold;">Yes, set up my account</a>
-          </p>
-          <p style="font-size:12px;color:#888;margin-top:20px;">No cost, no obligation — you're only ever matched with verified counterparties, and nothing is shared until you're ready. If this isn't relevant to you, feel free to ignore this email.</p>
-        `,
-      });
-
-      await fetch(`${supabaseUrl}/rest/v1/referrals?id=eq.${referralId}`, {
-        method: "PATCH",
-        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ invite_status: "sent", invite_sent_at: new Date().toISOString() }),
-      });
-    }
-
-    if (type === "confirm") {
-      if (referral.referred_type !== "seller") return res.status(400).json({ error: "This is only used for seller referrals." });
-      if (!referral.referred_email) return res.status(400).json({ error: "No email on file for the referred company — ask the broker for it first." });
-
-      const base = `https://tankbridge.co.za/?referral_confirm=1&token=${referral.seller_confirm_token}`;
-
-      try {
-        await sendResendEmail({
-          to: referral.referred_email,
-          subject: `Your listing is ready to go live on Tankbridge — just confirm`,
-          html: `
-            <h2>You're one click away from a verified listing</h2>
-            <p><strong>${broker?.company_name || "A broker"}</strong> has set up a listing for <strong>${referral.referred_company_name}</strong> on Tankbridge — South Africa's verified B2B marketplace for bulk diesel. Every buyer on the platform is CIPC/DMRE-checked before they ever see your listing, and your identity stays anonymous until a real buyer commits.</p>
-            <div style="background:#f6f4ec;padding:14px 16px;margin:16px 0;">
-              <p style="margin:0 0 6px;font-weight:bold;">Your listing:</p>
-              <p style="margin:2px 0;"><strong>Product:</strong> ${referral.product}</p>
-              <p style="margin:2px 0;"><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
-              <p style="margin:2px 0;"><strong>Asking price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
-              <p style="margin:2px 0;"><strong>Terms:</strong> ${terms}</p>
-              <p style="margin:2px 0;"><strong>Location:</strong> ${referral.location}</p>
-              <p style="margin:2px 0;"><strong>Commission:</strong> ${Math.round(Number(referral.proposed_commission_rate || 0.10) * 100)} cents / litre</p>
-            </div>
-            <p>If this all looks right, one click puts you live on the Market Board — free to list, no obligation, and you're only ever contacted once a real, verified buyer accepts.</p>
-            <p style="margin-top:20px;">
-              <a href="${base}&decision=approve" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;margin-right:10px;">Yes, list it</a>
-              <a href="${base}&decision=reject" style="background:#a63b32;color:#ece8de;padding:11px 18px;text-decoration:none;font-weight:bold;">Something's not right</a>
-            </p>
-            <p style="font-size:12px;color:#888;margin-top:20px;">No login needed — these links take you straight to a confirmation page.</p>
-          `,
-        });
-        await sbPatch(`referrals?id=eq.${referralId}`, { seller_confirm_email_status: "sent", seller_confirm_email_sent_at: new Date().toISOString(), seller_confirm_email_error: null }, serviceKey, supabaseUrl);
-      } catch (emailErr) {
-        await sbPatch(`referrals?id=eq.${referralId}`, { seller_confirm_email_status: "failed", seller_confirm_email_sent_at: new Date().toISOString(), seller_confirm_email_error: emailErr.message }, serviceKey, supabaseUrl);
-        return res.status(500).json({ error: "Failed to send confirmation email", detail: emailErr.message });
-      }
-    }
-
-    if (type === "co_broker_claim") {
-      if (!referral.is_co_broker_referral) return res.status(400).json({ error: "This is only used for co-broker handoff referrals." });
-      if (!referral.co_broker_upstream_email) return res.status(400).json({ error: "No upstream broker email on file." });
-
-      const claimUrl = `https://tankbridge.co.za/?co_broker_claim=1&token=${referral.co_broker_confirm_token}`;
-      const shareLine = referral.co_broker_share_mode === "fixed"
-        ? `<strong>${broker?.company_name || "The introducing broker"} keeps ${Math.round(Number(referral.co_broker_fixed_amount) * 100)}c/litre first, and you get whatever's left of the brokerage fee.</strong>`
-        : `<strong>${Math.round((1 - Number(referral.co_broker_split_pct)) * 100)}% to you, ${Math.round(Number(referral.co_broker_split_pct) * 100)}% to ${broker?.company_name || "the introducing broker"}</strong>.`;
-
-      try {
-        await sendResendEmail({
-          to: referral.co_broker_upstream_email,
-          subject: `${broker?.company_name || "A broker"} wants to register this ${referral.referred_type}'s listing — do you know them?`,
-          html: `
-            <h2>Do you know this ${referral.referred_type}?</h2>
-            <p><strong>${broker?.company_name || "A broker"}</strong> is trying to register the listing below with Tankbridge, for a ${referral.referred_type} matching:</p>
-            <p><strong>Company (as best known):</strong> ${referral.referred_company_name || "-"}</p>
-            <p><strong>Product:</strong> ${referral.product}</p>
-            <p><strong>Volume:</strong> ${Number(referral.volume).toLocaleString()} litres</p>
-            <p><strong>Price:</strong> R ${Number(referral.unit_price).toFixed(2)} / litre</p>
-            <p><strong>Terms:</strong> ${terms}</p>
-            <p><strong>Location:</strong> ${referral.location}</p>
-            ${referral.referred_type === "seller" && referral.proposed_commission_rate ? `<p><strong>Commission:</strong> ${Math.round(Number(referral.proposed_commission_rate) * 100)} cents / litre</p>` : ""}
-            <p>If you confirm, you'll register this ${referral.referred_type} yourself with the real details. Of the Tankbridge brokerage fee on this deal: ${shareLine}</p>
-            <p style="margin-top:20px;">
-              <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">I know them — let's proceed</a>
-            </p>
-            <p style="font-size:12px;color:#888;margin-top:16px;">You'll need a free Tankbridge broker account to complete this (register or log in first, then reopen this link). If you don't recognise this company, you can decline from the same link.</p>
-          `,
-        });
-        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_email_status: "sent", co_broker_email_sent_at: new Date().toISOString(), co_broker_email_error: null }, serviceKey, supabaseUrl);
-      } catch (emailErr) {
-        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_email_status: "failed", co_broker_email_sent_at: new Date().toISOString(), co_broker_email_error: emailErr.message }, serviceKey, supabaseUrl);
-        return res.status(500).json({ error: "Failed to send confirmation email", detail: emailErr.message });
-      }
-    }
-
-    if (type === "split_dispute") {
-      if (!broker?.email || broker.email === "-") return res.status(200).json({ ok: true, skipped: true });
-      const disputeUrl = `https://tankbridge.co.za/?split_dispute=1&token=${referral.co_broker_dispute_token}`;
-      const currentLine = referral.co_broker_share_mode === "fixed"
-        ? `You keep ${Math.round(Number(referral.co_broker_fixed_amount) * 100)}c/litre first, they get the rest`
-        : `${Math.round(Number(referral.co_broker_split_pct) * 100)}% to them, ${Math.round((1 - Number(referral.co_broker_split_pct)) * 100)}% to you`;
-      const proposedLine = referral.co_broker_share_mode === "fixed"
-        ? `They're proposing: you keep ${Math.round(Number(referral.co_broker_disputed_amount) * 100)}c/litre first, they get the rest`
-        : `They're proposing: ${Math.round(Number(referral.co_broker_disputed_split_pct) * 100)}% to them, ${Math.round((1 - Number(referral.co_broker_disputed_split_pct)) * 100)}% to you`;
-
-      try {
-        await sendResendEmail({
-          to: broker.email,
-          subject: `The Mandate you referred says the commission split isn't what you agreed`,
-          html: `
-            <h2>Commission split needs your confirmation</h2>
-            <p>The Mandate you introduced for the <strong>${referral.referred_type}</strong> (${referral.referred_company_name || "-"}) confirmed they know the company, but said this split isn't what you actually agreed:</p>
-            <p><strong>What's currently on file:</strong> ${currentLine}</p>
-            <p><strong>What they say:</strong> ${proposedLine}</p>
-            ${referral.co_broker_dispute_note ? `<p><strong>Their note:</strong> ${referral.co_broker_dispute_note}</p>` : ""}
-            <p style="margin-top:20px;">
-              <a href="${disputeUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">Review and respond</a>
-            </p>
-            <p style="font-size:12px;color:#888;margin-top:16px;">Their registration is on hold until you confirm or reject this.</p>
-          `,
-        });
-        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_email_status: "sent", co_broker_dispute_email_sent_at: new Date().toISOString(), co_broker_dispute_email_error: null }, serviceKey, supabaseUrl);
-      } catch (emailErr) {
-        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_email_status: "failed", co_broker_dispute_email_sent_at: new Date().toISOString(), co_broker_dispute_email_error: emailErr.message }, serviceKey, supabaseUrl);
-        return res.status(500).json({ error: "Failed to send dispute email", detail: emailErr.message });
-      }
-    }
-
-    if (type === "split_dispute_resolved") {
-      if (!referral.co_broker_upstream_email) return res.status(200).json({ ok: true, skipped: true });
-      const accepted = referral.co_broker_dispute_status === "agreed";
-      const claimUrl = `https://tankbridge.co.za/?co_broker_claim=1&token=${referral.co_broker_confirm_token}`;
-
-      try {
-        await sendResendEmail({
-          to: referral.co_broker_upstream_email,
-          subject: accepted ? "Your proposed commission split was agreed" : "Your proposed commission split wasn't agreed",
-          html: accepted ? `
-            <h2>Good news — they agreed</h2>
-            <p><strong>${broker?.company_name || "The introducing broker"}</strong> confirmed your proposed split. You can go ahead and complete your registration now.</p>
-            <p style="margin-top:20px;">
-              <a href="${claimUrl}" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">Continue registration</a>
-            </p>
-          ` : `
-            <h2>They didn't agree with the proposed split</h2>
-            <p><strong>${broker?.company_name || "The introducing broker"}</strong> did not confirm your proposed split. This has been flagged to Tankbridge to help sort out — we'll be in touch.</p>
-          `,
-        });
-        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_resolved_email_status: "sent", co_broker_dispute_resolved_email_sent_at: new Date().toISOString(), co_broker_dispute_resolved_email_error: null }, serviceKey, supabaseUrl);
-      } catch (emailErr) {
-        await sbPatch(`referrals?id=eq.${referralId}`, { co_broker_dispute_resolved_email_status: "failed", co_broker_dispute_resolved_email_sent_at: new Date().toISOString(), co_broker_dispute_resolved_email_error: emailErr.message }, serviceKey, supabaseUrl);
-        return res.status(500).json({ error: "Failed to send resolution email", detail: emailErr.message });
-      }
-    }
-
-    return res.status(200).json({ ok: true });
-  } catch (e) {
-    console.error("send-referral-email error:", e);
-    return res.status(500).json({ error: e.message });
-  }
-}
+  return v_referral;
+end;
+$$;
+grant execute on function public.confirm_rep(uuid, boolean, text) to anon, authenticated;
