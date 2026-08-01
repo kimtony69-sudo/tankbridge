@@ -26,7 +26,7 @@ const HOW_IT_HELPS = {
     { num: "01", title: "Register & get approved", body: "Sign up as a broker or mandate holder. Tankbridge admin reviews and approves you once.", benefit: "One-time approval, then refer as many deals as you can find." },
     { num: "02", title: "Introduce a buyer or seller", body: "Know a company directly? Enter what you have. Don't, but know who does? Hand off to their actual mandate.", benefit: "Your introduction is timestamped and logged before either side ever sees a name — your claim is protected from day one." },
     { num: "03", title: "Negotiate on their behalf", body: "If authorised as a mandate, counter price and commission split in real time, with a live payout preview.", benefit: "You can actively work the deal, not just wait on the sidelines for a yes." },
-    { num: "04", title: "Deal closes, you're paid directly", body: "Your commission share (up to 70% of the total) pays out through an independent third-party escrow, straight to you.", benefit: "No chasing payment through Tankbridge or the other side's broker — escrow pays everyone at once." },
+    { num: "04", title: "Deal closes, you're paid directly", body: "Your commission share pays out through an independent third-party escrow, straight to you.", benefit: "Platform fee is 30% on matched deals — but drops to just 10% if you introduced both sides yourself. No chasing payment through Tankbridge or the other side's broker — escrow pays everyone at once." },
     { num: "05", title: "Covered for 24 months", body: "Every relationship you introduce is automatically tracked for 24 months, even across repeat deals.", benefit: "If they trade again without a new referral, your commission still applies automatically." },
   ],
 };
@@ -672,6 +672,16 @@ export default function App() {
     return null;
   })();
 
+  const repConfirmParams = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("rep_confirm") === "1" && p.get("token")) {
+        return { token: p.get("token") };
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+
   const requestedView = (() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -680,7 +690,14 @@ export default function App() {
     } catch { return null; }
   })();
 
-  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : coBrokerClaimParams ? "co_broker_claim" : splitDisputeParams ? "split_dispute" : requestedView || "landing");
+  const [view, setView] = useState(checkinParams ? "checkin" : inviteToken ? "invite" : referralConfirmParams ? "referral_confirm" : coBrokerClaimParams ? "co_broker_claim" : splitDisputeParams ? "split_dispute" : repConfirmParams ? "rep_confirm" : requestedView || "landing");
+  const [repConfirmData, setRepConfirmData] = useState(null);
+  const [repConfirmLoading, setRepConfirmLoading] = useState(true);
+  const [repConfirmError, setRepConfirmError] = useState("");
+  const [repConfirmResult, setRepConfirmResult] = useState(null);
+  const [repConfirmResolving, setRepConfirmResolving] = useState(false);
+  const [showRepDenyForm, setShowRepDenyForm] = useState(false);
+  const [repDenyReason, setRepDenyReason] = useState("");
   const [coBrokerClaimData, setCoBrokerClaimData] = useState(null);
   const [coBrokerClaimLoading, setCoBrokerClaimLoading] = useState(true);
   const [coBrokerClaimError, setCoBrokerClaimError] = useState("");
@@ -1061,6 +1078,27 @@ export default function App() {
     });
     setSplitDisputeResolving(false);
     setSplitDisputeResult({ accepted: accept });
+  }
+
+  // ---------- REPRESENTATION CONFIRM (referred company, no login required) ----------
+  useEffect(() => {
+    if (!repConfirmParams) { setRepConfirmLoading(false); return; }
+    (async () => {
+      const { data, error } = await supabase.rpc("get_rep_confirm_by_token", { p_token: repConfirmParams.token });
+      if (error || !data || data.length === 0) { setRepConfirmError("This link is invalid or has expired."); setRepConfirmLoading(false); return; }
+      setRepConfirmData(data[0]);
+      setRepConfirmLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function resolveRepConfirm(confirmed, reason) {
+    setRepConfirmResolving(true);
+    setRepConfirmError("");
+    const { error } = await supabase.rpc("confirm_rep", { p_token: repConfirmParams.token, p_confirmed: confirmed, p_reason: reason || null });
+    if (error) { setRepConfirmResolving(false); setRepConfirmError(error.message); return; }
+    setRepConfirmResolving(false);
+    setRepConfirmResult({ confirmed });
   }
 
   function updateInviteField(field, value) { setInviteForm(f => ({ ...f, [field]: value })); }
@@ -1915,6 +1953,19 @@ export default function App() {
     }
   }
 
+  async function triggerRepConfirmIfNeeded(companyId) {
+    try {
+      const { data } = await supabase.rpc("trigger_rep_confirm_if_needed", { p_company_id: companyId });
+      const result = Array.isArray(data) ? data[0] : data;
+      if (result?.should_send) {
+        await fetch("/api/send-referral-email", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "rep_confirm", referralId: result.referral_id }),
+        });
+      }
+    } catch { /* non-blocking — never interrupt the offer flow over this */ }
+  }
+
   async function submitSellerOffer() {
     const price = Number(offerPrice);
     if (!price || price <= 0) { setOfferError("Please enter a valid price."); return; }
@@ -1931,6 +1982,7 @@ export default function App() {
     setOfferSubmitting(false);
     if (error) { setOfferError(error.message); return; }
     setOfferTarget(null);
+    triggerRepConfirmIfNeeded(offerTarget.company_id);
     fetch("/api/notify-offer", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ offerId: data.id, event: "new_offer" }),
@@ -2150,6 +2202,7 @@ export default function App() {
     setCounterSubmitting(false);
     if (error) { setCounterError(error.message); return; }
     setCounterTarget(null);
+    triggerRepConfirmIfNeeded(counterTarget.company_id);
     await loadMyOffers();
     await loadMarketBoard();
     showToast("Counter-offer sent — see My negotiations on your Dashboard to track it.");
@@ -2190,6 +2243,7 @@ export default function App() {
       p_bol_note: myCompany?.type === "buyer" && bolRequested ? bolNote : null,
     });
     if (error) { setAcceptError(error.message); return; }
+    triggerRepConfirmIfNeeded(acceptTarget.company_id);
     const isSellListing = acceptTarget.kind !== "buy";
     let reveal;
     if (isSellListing) {
@@ -2940,6 +2994,66 @@ export default function App() {
         </div>
       )}
 
+      {/* ===================== REPRESENTATION CONFIRM (public, no login) ===================== */}
+      {view === "rep_confirm" && (
+        <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 560, margin: "0 auto" }}>
+          {repConfirmLoading ? (
+            <p style={{ color: "var(--steel-soft)" }}>Loading…</p>
+          ) : repConfirmError && !repConfirmData ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Link not found</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>{repConfirmError}</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : repConfirmResult ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              {repConfirmResult.confirmed ? (
+                <>
+                  <CheckCircle2 size={40} color="#3f6b52" style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Thanks for confirming</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Noted — the negotiation can continue as normal.</p>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle size={40} style={{ margin: "0 auto 14px" }} />
+                  <h2 style={{ fontSize: 24, marginBottom: 8 }}>Thanks for letting us know</h2>
+                  <p style={{ color: "var(--steel)", fontSize: 14 }}>Tankbridge has been flagged to review this — we'll be in touch.</p>
+                </>
+              )}
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : repConfirmData?.rep_confirm_status !== "pending" ? (
+            <div className="gnt-card" style={{ textAlign: "center", padding: "40px 28px" }}>
+              <AlertTriangle size={32} style={{ margin: "0 auto 14px" }} />
+              <h2 style={{ fontSize: 22, marginBottom: 8 }}>Already responded to</h2>
+              <p style={{ color: "var(--steel)", fontSize: 14 }}>This link has already been used.</p>
+              <button className="gnt-btn gnt-btn-ink" style={{ marginTop: 16 }} onClick={() => goto("landing")}>Back to Tankbridge</button>
+            </div>
+          ) : (
+            <div className="gnt-card" style={{ padding: "32px 28px" }}>
+              <h2 style={{ fontSize: 22, marginBottom: 6 }}>Quick confirmation needed</h2>
+              <p style={{ fontSize: 13.5, color: "var(--steel)", marginBottom: 20 }}>
+                <strong>{repConfirmData.broker_name}</strong> registered <strong>{repConfirmData.referred_company_name}</strong> on Tankbridge as a {repConfirmData.referred_type}, and a real counterparty has now engaged with this listing.
+                Does {repConfirmData.broker_name} actually represent you in this negotiation?
+              </p>
+              {repConfirmError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {repConfirmError}</div>}
+              {!showRepDenyForm ? (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="gnt-btn gnt-btn-amber" disabled={repConfirmResolving} onClick={() => resolveRepConfirm(true)}>{repConfirmResolving ? "Sending…" : "Yes, they represent me"}</button>
+                  <button className="gnt-btn gnt-btn-danger" disabled={repConfirmResolving} onClick={() => setShowRepDenyForm(true)}>No, they don't</button>
+                </div>
+              ) : (
+                <div>
+                  <div className="gnt-field"><label>Reason (optional)</label><textarea rows={2} value={repDenyReason} onChange={e => setRepDenyReason(e.target.value)} /></div>
+                  <button className="gnt-btn gnt-btn-danger gnt-btn-sm" disabled={repConfirmResolving} onClick={() => resolveRepConfirm(false, repDenyReason)}>{repConfirmResolving ? "Sending…" : "Confirm — they don't represent me"}</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ===================== BROKER-INVITED REGISTRATION (public) ===================== */}
       {view === "invite" && (
         <div className="gnt-main" style={{ paddingTop: 40, maxWidth: 640, margin: "0 auto" }}>
@@ -3248,7 +3362,7 @@ export default function App() {
                 </div>
                 <div style={{ flex: "1 1 260px", background: "rgba(236,232,222,0.06)", border: "1px solid rgba(236,232,222,0.15)", padding: "20px 22px" }}>
                   <h3 style={{ fontSize: 17, color: "var(--paper)", marginBottom: 6 }}>Haven't found a match yet?</h3>
-                  <p style={{ fontSize: 13.5, color: "var(--paper-dark)" }}>Post it — up to 70% instead of the usual 50%.</p>
+                  <p style={{ fontSize: 13.5, color: "var(--paper-dark)" }}>Post it — up to 70% instead of the usual 50/50.</p>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
