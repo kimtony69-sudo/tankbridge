@@ -3349,7 +3349,7 @@ export default function App() {
                     <div className="gnt-manifest-row"><span className="k">Type</span><span className="v">{latestOffer.kind === "buy" ? "Buying" : "Selling"}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Product</span><span className="v">{latestOffer.product}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Volume</span><span className="v">{Number(latestOffer.volume).toLocaleString()} ℓ</span></div>
-                    <div className="gnt-manifest-row"><span className="k">Price</span><span className="v">{fmtMoney(latestOffer.unit_price)}/ℓ</span></div>
+                    <div className="gnt-manifest-row"><span className="k">Price</span><span className="v">{latestOffer.unit_price == null ? "On request" : `${fmtMoney(latestOffer.unit_price)}/ℓ`}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Terms</span><span className="v">{fmtTerms(latestOffer.terms)}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Location</span><span className="v">{latestOffer.location}</span></div>
                     <div className="gnt-manifest-row"><span className="k">Verification</span><span className="v" style={{ color: "#3f6b52" }}>CIPC + DMRE ✓</span></div>
