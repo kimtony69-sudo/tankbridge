@@ -109,7 +109,7 @@ const EMPTY_REG = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
 };
-const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed", validUntil: "", whileStockLasts: false };
+const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed", validUntil: "", whileStockLasts: false, priceVisibility: "public" };
 const EMPTY_REFERRAL = {
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "",
   referredContactName: "", referredPhone: "", referredEmail: "",
@@ -193,6 +193,22 @@ function CommissionEstimateTable({ commissionCents, volume }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Seller-only: keep the price public (default) or hide it until a
+// registered buyer (or their Mandate) explicitly requests it. Volume,
+// location, terms and availability always stay visible either way.
+function PriceVisibilityField({ value, onChange }) {
+  return (
+    <div className="gnt-field">
+      <label>Price visibility</label>
+      <div className="gnt-type-toggle">
+        <button type="button" className={value !== "on_request" ? "active" : ""} onClick={() => onChange("public")}>Show price to everyone</button>
+        <button type="button" className={value === "on_request" ? "active" : ""} onClick={() => onChange("on_request")}>Price on request</button>
+      </div>
+      {value === "on_request" && <div className="hint">Volume, location and terms stay visible. Only registered buyers (or their Mandate) can request the price — you'll be notified the first time each one does.</div>}
     </div>
   );
 }
@@ -875,6 +891,12 @@ export default function App() {
 
   const [marketFilter, setMarketFilter] = useState({ kind: "all", product: "all", terms: "all" });
   const [shareTargetId, setShareTargetId] = useState(null);
+  const [revealedPrices, setRevealedPrices] = useState({});
+  const [priceRequestTargetId, setPriceRequestTargetId] = useState(null);
+  const [priceRequestRepresented, setPriceRequestRepresented] = useState("");
+  const [priceRequestMyRepresentedBuyers, setPriceRequestMyRepresentedBuyers] = useState([]);
+  const [priceRequestError, setPriceRequestError] = useState("");
+  const [priceRequestLoading, setPriceRequestLoading] = useState(false);
   const [shareEmails, setShareEmails] = useState([""]);
   const [sharePhone, setSharePhone] = useState("");
   const [shareSending, setShareSending] = useState(false);
@@ -1625,6 +1647,7 @@ export default function App() {
       bol_terms: listingForm.bolTerms,
       valid_until: listingForm.validUntil || null,
       while_stock_lasts: listingForm.whileStockLasts,
+      price_visibility: myCompany.type === "seller" ? listingForm.priceVisibility : "public",
       status: "active", // this form is only reachable once the company is already approved
     }).select().single();
     if (error) { setListingError(error.message); return; }
@@ -1662,6 +1685,7 @@ export default function App() {
       bol_terms: editingListing.bol_terms || "not_offered",
       valid_until: editingListing.valid_until || null,
       while_stock_lasts: editingListing.while_stock_lasts || false,
+      price_visibility: editingListing.kind === "sell" ? (editingListing.price_visibility || "public") : "public",
     }).eq("id", editingListing.id);
     if (error) { setEditError(error.message); return; }
     setEditingListing(null);
@@ -2180,6 +2204,43 @@ export default function App() {
   }
 
 
+  async function openPriceRequest(listing) {
+    setPriceRequestTargetId(listing.id);
+    setPriceRequestRepresented("");
+    setPriceRequestError("");
+    if (session) {
+      const { data } = await supabase.rpc("get_my_represented_companies");
+      setPriceRequestMyRepresentedBuyers((data || []).filter(c => c.type === "buyer"));
+    }
+  }
+
+  function closePriceRequest() {
+    setPriceRequestTargetId(null);
+    setPriceRequestError("");
+  }
+
+  async function submitPriceRequest(listing) {
+    setPriceRequestLoading(true);
+    setPriceRequestError("");
+    const { data, error } = await supabase.rpc("reveal_listing_price", {
+      p_listing_id: listing.id,
+      p_represented_company_id: priceRequestRepresented || null,
+    });
+    setPriceRequestLoading(false);
+    if (error) { setPriceRequestError(error.message); return; }
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result) { setPriceRequestError("Something went wrong — please try again."); return; }
+    setRevealedPrices(m => ({ ...m, [listing.id]: result.unit_price }));
+    setPriceRequestTargetId(null);
+    if (result.is_first_reveal) {
+      fetch("/api/notify-offer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "price_requested", listingId: listing.id }),
+      }).catch(() => {});
+    }
+  }
+
+
   function toggleShareListing(listingId) {
     setShareTargetId(prev => {
       if (prev !== listingId) { setShareEmails([""]); setSharePhone(""); setShareSentOk(false); }
@@ -2639,9 +2700,10 @@ export default function App() {
 
   function startEditBrokerListing(listing) {
     setBrokerListingForm({
-      volume: String(listing.volume), unitPrice: String(listing.unit_price), location: listing.location,
+      kind: listing.kind, volume: String(listing.volume), unitPrice: String(listing.unit_price), location: listing.location,
       terms: listing.terms || [], bolTerms: listing.bol_terms || "not_offered",
       validUntil: listing.valid_until || "", whileStockLasts: listing.while_stock_lasts || false,
+      priceVisibility: listing.price_visibility || "public",
     });
     setEditingBrokerListingId(listing.id);
     setBrokerListingError("");
@@ -2657,6 +2719,7 @@ export default function App() {
       p_listing_id: editingBrokerListingId, p_volume: Number(f.volume), p_unit_price: Number(f.unitPrice),
       p_location: f.location, p_terms: f.terms, p_bol_terms: f.bolTerms,
       p_valid_until: f.validUntil || null, p_while_stock_lasts: f.whileStockLasts,
+      p_price_visibility: f.kind === "sell" ? f.priceVisibility : "public",
     });
     if (error) { setBrokerListingError(error.message); return; }
     setEditingBrokerListingId(null);
@@ -2677,7 +2740,7 @@ export default function App() {
   function startAddBrokerListing(referral) {
     setNewBrokerListingForm({
       product: referral.product || PRODUCTS[0], volume: "", unitPrice: "", location: referral.location || "",
-      availability: "", terms: [], bolTerms: "not_offered", validUntil: "", whileStockLasts: false,
+      availability: "", terms: [], bolTerms: "not_offered", validUntil: "", whileStockLasts: false, priceVisibility: "public",
     });
     setAddingListingReferralId(referral.id);
     setNewBrokerListingError("");
@@ -2707,6 +2770,7 @@ export default function App() {
       p_bol_terms: f.bolTerms,
       p_valid_until: f.validUntil || null,
       p_while_stock_lasts: f.whileStockLasts,
+      p_price_visibility: referral.referred_type === "seller" ? f.priceVisibility : "public",
     });
     if (error) { setNewBrokerListingError(error.message); return; }
     cancelAddBrokerListing();
@@ -4108,6 +4172,9 @@ export default function App() {
                         validUntil={listingForm.validUntil} whileStockLasts={listingForm.whileStockLasts}
                         onValidUntilChange={v => updateListingField("validUntil", v)} onWhileStockLastsChange={v => updateListingField("whileStockLasts", v)}
                       />
+                      {myCompany.type === "seller" && (
+                        <PriceVisibilityField value={listingForm.priceVisibility} onChange={v => updateListingField("priceVisibility", v)} />
+                      )}
                     </div>
                     <div className="gnt-field"><label>Notes (optional)</label><textarea rows={2} value={listingForm.notes} onChange={e => updateListingField("notes", e.target.value)} /></div>
                     <div className="gnt-field">
@@ -4171,6 +4238,9 @@ export default function App() {
                           validUntil={editingListing.valid_until} whileStockLasts={editingListing.while_stock_lasts}
                           onValidUntilChange={v => updateEditField("valid_until", v)} onWhileStockLastsChange={v => updateEditField("while_stock_lasts", v)}
                         />
+                        {editingListing.kind === "sell" && (
+                          <PriceVisibilityField value={editingListing.price_visibility} onChange={v => updateEditField("price_visibility", v)} />
+                        )}
                         <div style={{ display: "flex", gap: 10 }}>
                           <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit">Save</button>
                           <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" type="button" onClick={cancelEdit}>Cancel</button>
@@ -4549,6 +4619,9 @@ export default function App() {
                                 validUntil={brokerListingForm.validUntil} whileStockLasts={brokerListingForm.whileStockLasts}
                                 onValidUntilChange={v => setBrokerListingForm(f => ({ ...f, validUntil: v }))} onWhileStockLastsChange={v => setBrokerListingForm(f => ({ ...f, whileStockLasts: v }))}
                               />
+                              {brokerListingForm.kind === "sell" && (
+                                <PriceVisibilityField value={brokerListingForm.priceVisibility} onChange={v => setBrokerListingForm(f => ({ ...f, priceVisibility: v }))} />
+                              )}
                               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                                 <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={saveBrokerListingEdit}>Save</button>
                                 <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => { setEditingBrokerListingId(null); setBrokerListingForm(null); }}>Cancel edit</button>
@@ -4588,6 +4661,9 @@ export default function App() {
                                 validUntil={newBrokerListingForm.validUntil} whileStockLasts={newBrokerListingForm.whileStockLasts}
                                 onValidUntilChange={v => setNewBrokerListingForm(f => ({ ...f, validUntil: v }))} onWhileStockLastsChange={v => setNewBrokerListingForm(f => ({ ...f, whileStockLasts: v }))}
                               />
+                              {referral.referred_type === "seller" && (
+                                <PriceVisibilityField value={newBrokerListingForm.priceVisibility} onChange={v => setNewBrokerListingForm(f => ({ ...f, priceVisibility: v }))} />
+                              )}
                               <div className="gnt-field"><label>Terms</label>
                                 <TermsCheckboxGroup value={newBrokerListingForm.terms} onChange={v => setNewBrokerListingForm(f => ({ ...f, terms: v }))} />
                               </div>
@@ -4663,6 +4739,8 @@ export default function App() {
           <div style={{ display: "grid", gap: 14 }}>
             {visibleListings.map(l => {
               const isSell = l.kind !== "buy";
+              const isPriceHidden = l.price_visibility === "on_request" && isSell && l.unit_price == null && revealedPrices[l.id] == null;
+              const effectiveListing = revealedPrices[l.id] != null ? { ...l, unit_price: revealedPrices[l.id] } : l;
               return (
                 <div key={l.id} className="gnt-listing" style={{ borderLeftColor: isSell ? "var(--verified)" : "#2c5a82" }}>
                   <div className="gnt-listing-top">
@@ -4676,18 +4754,24 @@ export default function App() {
                       <div className="gnt-listing-product">{l.product}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      {l.price_mode === "seller_offer" ? (
-                        <div className="gnt-listing-price">Offer<small>seller proposes price</small></div>
+                      {isPriceHidden ? (
+                        <>
+                          <div className="gnt-listing-price"><span style={{ fontSize: 16 }}>Price on request</span></div>
+                          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openPriceRequest(l)}>Request price <ChevronRight size={13} /></button>
+                        </>
+                      ) : l.price_mode === "seller_offer" ? (
+                        <>
+                          <div className="gnt-listing-price">Offer<small>seller proposes price</small></div>
+                          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openSubmitOffer(l)}>Submit offer <ChevronRight size={13} /></button>
+                        </>
                       ) : (
-                        <div className="gnt-listing-price">{fmtMoney(l.unit_price)}<small>{isSell ? "asking / litre" : "bid / litre"}</small></div>
-                      )}
-                      {l.price_mode === "seller_offer" ? (
-                        <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openSubmitOffer(l)}>Submit offer <ChevronRight size={13} /></button>
-                      ) : (
-                        <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
-                          <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(l)}>Accept price <ChevronRight size={13} /></button>
-                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => openCounter(l)}>Counter offer</button>
-                        </div>
+                        <>
+                          <div className="gnt-listing-price">{fmtMoney(effectiveListing.unit_price)}<small>{isSell ? "asking / litre" : "bid / litre"}</small></div>
+                          <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
+                            <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={() => openAccept(effectiveListing)}>Accept price <ChevronRight size={13} /></button>
+                            <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => openCounter(effectiveListing)}>Counter offer</button>
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
@@ -5235,6 +5319,66 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Request price modal — for "price on request" seller listings, buyers/their Mandate only */}
+      {priceRequestTargetId && (() => {
+        const targetListing = visibleListings.find(l => l.id === priceRequestTargetId);
+        if (!targetListing) return null;
+        return (
+          <div className="gnt-modal-backdrop" onClick={closePriceRequest}>
+            <div className="gnt-modal" onClick={e => e.stopPropagation()}>
+              {!session ? (
+                <>
+                  <h3 style={{ fontSize: 22, marginBottom: 10 }}>Sign in to request this price</h3>
+                  <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Log in with your buyer account to see the price. New here? Register first.</p>
+                  <LoginGate
+                    onLoggedIn={async () => {
+                      const { data } = await supabase.rpc("get_my_represented_companies");
+                      setPriceRequestMyRepresentedBuyers((data || []).filter(c => c.type === "buyer"));
+                    }}
+                    onRegisterClick={() => { closePriceRequest(); resetRegFlow(); }}
+                  />
+                </>
+              ) : myCompany?.type !== "buyer" && priceRequestMyRepresentedBuyers.length === 0 ? (
+                <>
+                  <h3 style={{ fontSize: 22, marginBottom: 10 }}>Buyers only</h3>
+                  <p style={{ fontSize: 13, color: "var(--steel)", marginBottom: 16 }}>Only an approved buyer account (or their authorised Mandate) can request a price. {myCompany ? "Your account is registered as a " + myCompany.type + ", and you don't yet represent any buyer on Tankbridge." : ""} Referred a buyer before? Use "Refer another company" from your Dashboard first, then come back.</p>
+                  <button className="gnt-btn gnt-btn-ghost" onClick={closePriceRequest}>Close</button>
+                </>
+              ) : (
+                <>
+                  <h3 style={{ fontSize: 20, marginBottom: 6 }}>Request the price</h3>
+                  <p style={{ fontSize: 13, color: "var(--steel-soft)", marginBottom: 14 }}>{targetListing.product} · {Number(targetListing.volume).toLocaleString()} ℓ · {fmtTerms(targetListing.terms)} · {targetListing.location}</p>
+                  {priceRequestMyRepresentedBuyers.length > 0 && myCompany?.type === "buyer" && (
+                    <div className="gnt-field">
+                      <label>Acting as (optional — leave blank to request as yourself)</label>
+                      <select value={priceRequestRepresented} onChange={e => setPriceRequestRepresented(e.target.value)}>
+                        <option value="">Myself ({myCompany?.company_name})</option>
+                        {priceRequestMyRepresentedBuyers.map(c => <option key={c.id} value={c.id}>On behalf of {c.company_name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {priceRequestMyRepresentedBuyers.length > 0 && myCompany?.type !== "buyer" && (
+                    <div className="gnt-field">
+                      <label>Requesting on behalf of</label>
+                      <select value={priceRequestRepresented} onChange={e => setPriceRequestRepresented(e.target.value)}>
+                        <option value="">Select a buyer you represent…</option>
+                        {priceRequestMyRepresentedBuyers.map(c => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {priceRequestError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {priceRequestError}</div>}
+                  <p className="hint" style={{ marginBottom: 14 }}>The seller will be notified you requested this — your details aren't shared with them yet.</p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="gnt-btn gnt-btn-amber" disabled={priceRequestLoading || (myCompany?.type !== "buyer" && !priceRequestRepresented)} onClick={() => submitPriceRequest(targetListing)}>{priceRequestLoading ? "Requesting…" : "Reveal price"}</button>
+                    <button className="gnt-btn gnt-btn-ghost" onClick={closePriceRequest}>Cancel</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Counter offer modal — for fixed-price listings, from the opposite side or their Mandate */}
       {counterTarget && (
