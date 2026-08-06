@@ -4661,7 +4661,7 @@ export default function App() {
                                 validUntil={newBrokerListingForm.validUntil} whileStockLasts={newBrokerListingForm.whileStockLasts}
                                 onValidUntilChange={v => setNewBrokerListingForm(f => ({ ...f, validUntil: v }))} onWhileStockLastsChange={v => setNewBrokerListingForm(f => ({ ...f, whileStockLasts: v }))}
                               />
-                              {referral.referred_type === "seller" && (
+                              {r.referred_type === "seller" && (
                                 <PriceVisibilityField value={newBrokerListingForm.priceVisibility} onChange={v => setNewBrokerListingForm(f => ({ ...f, priceVisibility: v }))} />
                               )}
                               <div className="gnt-field"><label>Terms</label>
