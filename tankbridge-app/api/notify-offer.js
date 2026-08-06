@@ -109,6 +109,41 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, matchedCompanies: seenCompanyIds.size, emailsSent: recipients.length });
     }
 
+    // ---------------- Price requested on an "on request" seller listing ----------------
+    // Fires the first time a given buyer company requests the price. Tells the
+    // seller (and their Mandate, if any) that someone's interested — no buyer
+    // identity is shared at this stage, matching the same anonymity rule as
+    // everywhere else on the Market Board pre-accept.
+    if (type === "price_requested") {
+      if (!listingId) return res.status(400).json({ error: "Missing listingId" });
+
+      const listing = (await sb(`listings?id=eq.${listingId}&select=*,companies(id,company_name,email,user_id,authorized_negotiator_id)`, serviceKey, supabaseUrl))?.[0];
+      if (!listing) return res.status(404).json({ error: "Listing not found" });
+
+      const seller = listing.companies;
+      const recipients = [];
+      if (seller?.user_id && seller.email && seller.email !== "-") recipients.push({ email: seller.email, company_name: seller.company_name });
+      if (seller?.authorized_negotiator_id) {
+        const negRows = await sb(`companies?id=eq.${seller.authorized_negotiator_id}&select=company_name,email`, serviceKey, supabaseUrl);
+        const neg = negRows?.[0];
+        if (neg?.email && neg.email !== "-") recipients.push({ email: neg.email, company_name: neg.company_name });
+      }
+      if (recipients.length === 0) return res.status(200).json({ ok: true, skipped: true });
+
+      const subject = `A buyer requested your price: ${listing.product}, ${Number(listing.volume).toLocaleString()}ℓ`;
+      await Promise.all(recipients.map(r => sendResendEmail({
+        to: r.email,
+        subject,
+        html: `
+          <h2>Someone's interested in your listing</h2>
+          <p>Hi ${r.company_name}, a registered buyer just requested the price on your ${listing.product} listing (${Number(listing.volume).toLocaleString()}ℓ, ${listing.location}). Their identity stays anonymous until a deal is accepted, as usual.</p>
+          <p style="margin-top:16px;"><a href="https://tankbridge.co.za/?view=dashboard" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">View on your Dashboard</a></p>
+        `,
+      })));
+
+      return res.status(200).json({ ok: true, emailsSent: recipients.length });
+    }
+
     if (type === "share_listing") {
       const { shareToEmail, sharedByName } = req.body || {};
       if (!listingId || !shareToEmail) return res.status(400).json({ error: "Missing listingId or shareToEmail" });
