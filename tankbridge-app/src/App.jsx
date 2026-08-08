@@ -17,7 +17,7 @@ const HOW_IT_HELPS = {
   ],
   buyer: [
     { num: "01", title: "Register & get verified", body: "Submit your CIPC registration and company details. Sign the NCNDA once, upfront.", benefit: "Every seller you meet on the board is already CIPC- and DMRE-screened — no ghost allocations." },
-    { num: "02", title: "Browse the Market Board", body: "See live listings by product, volume, location and terms (COC, COD, ITT, TTO) — or post your own requirement.", benefit: "Real, current offers only — not a recycled broker list." },
+    { num: "02", title: "Browse the Market Board", body: "See live listings by product, volume, location and terms (COC, COD, ITT, TTO, FTT) — or post your own requirement.", benefit: "Real, current offers only — not a recycled broker list." },
     { num: "03", title: "Accept or counter", body: "Accept a listed price directly, or submit a counter on price and terms — up to 2 rounds of negotiation.", benefit: "You negotiate direct with the seller, with no broker inflating the price in the middle." },
     { num: "04", title: "Deal locked, escrow handles payment", body: "Once agreed, an independent third-party escrow pays the seller directly, exactly per the accepted terms.", benefit: "Your funds only move on your terms — Tankbridge never touches or holds them." },
     { num: "05", title: "Trade again, faster", body: "Your verified status and counterparty history stay on file for next time.", benefit: "Every following deal is faster — no repeating due diligence from scratch." },
@@ -57,7 +57,32 @@ const BOL_MARKET_BADGE = {
   case_by_case: "BOL: Case-by-case",
 };
 
-const TRADE_TERMS = ["COC", "COD", "ITT", "TTO"];
+const TRADE_TERMS = ["COC", "COD", "ITT", "TTO", "FTT"];
+
+// How the buyer's money and the seller's proof of product are exchanged.
+// Agreed between buyer and seller at accept time — a deal can still fall
+// apart later if they never settle on one, so it's raised early rather than
+// after days of paperwork.
+const SETTLEMENT_METHODS = {
+  direct: "Direct payment to seller",
+  bol: "BOL — payment after loading",
+  escrow: "Third-party escrow",
+  attorney: "Attorney-to-attorney (POF/POP exchange)",
+};
+
+// Recommendation only — never enforced. Any method stays selectable, since
+// what's normal varies by counterparty and how well they know each other.
+function recommendSettlementMethod(terms) {
+  const t = Array.isArray(terms) ? terms : [terms];
+  if (t.includes("ITT") || t.includes("TTO") || t.includes("FTT")) {
+    return { method: "attorney", note: "Strongly recommended at these volumes — escrow is equally acceptable." };
+  }
+  if (t.includes("COD")) {
+    return { method: "escrow", note: "Recommended for COD — protects the seller against non-payment after delivery." };
+  }
+  return { method: "direct", note: "Standard for a COC trial load. Buyers can propose escrow instead if they'd prefer." };
+}
+
 const BUYER_FELL_THROUGH_REASONS = [
   "Could not verify Proof of Product",
   "Seller changed the price unilaterally",
@@ -489,6 +514,11 @@ function DealCard({ deal, myCompany, onReported, onEscrowUpdated }) {
   const [customEscrowName, setCustomEscrowName] = useState("");
   const [customEscrowContact, setCustomEscrowContact] = useState("");
   const [escrowBusy, setEscrowBusy] = useState(false);
+  const [showSettlementPicker, setShowSettlementPicker] = useState(false);
+  const [settlementChoice, setSettlementChoice] = useState("");
+  const [settlementNote, setSettlementNote] = useState("");
+  const [settlementBusy, setSettlementBusy] = useState(false);
+  const [settlementError, setSettlementError] = useState("");
 
   const isSellerViewing = myCompany.id === deal.seller_company_id;
   const myReportedStatus = isSellerViewing ? deal.seller_reported_status : deal.buyer_reported_status;
@@ -570,6 +600,36 @@ function DealCard({ deal, myCompany, onReported, onEscrowUpdated }) {
     if (!error && onEscrowUpdated) onEscrowUpdated(data);
   }
 
+  function startSettlementPicker() {
+    setSettlementChoice(deal.settlement_method || recommendSettlementMethod(deal.terms).method);
+    setSettlementNote("");
+    setSettlementError("");
+    setShowSettlementPicker(true);
+  }
+
+  async function proposeSettlement() {
+    if (!settlementChoice) { setSettlementError("Please pick a method."); return; }
+    setSettlementBusy(true);
+    setSettlementError("");
+    const { error } = await supabase.rpc("propose_settlement_method", {
+      p_deal_id: deal.id, p_method: settlementChoice, p_note: settlementNote || null,
+    });
+    setSettlementBusy(false);
+    if (error) { setSettlementError(error.message); return; }
+    setShowSettlementPicker(false);
+    if (onEscrowUpdated) onEscrowUpdated();
+  }
+
+  async function respondToSettlement(agree) {
+    setSettlementBusy(true);
+    setSettlementError("");
+    const { error } = await supabase.rpc("respond_to_settlement_method", { p_deal_id: deal.id, p_agree: agree });
+    setSettlementBusy(false);
+    if (error) { setSettlementError(error.message); return; }
+    if (agree) { if (onEscrowUpdated) onEscrowUpdated(); }
+    else startSettlementPicker();
+  }
+
   return (
     <div className="gnt-card" style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -593,6 +653,59 @@ function DealCard({ deal, myCompany, onReported, onEscrowUpdated }) {
       )}
 
       {checked && !gated && deal.status !== "completed" && deal.status !== "cancelled" && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+          <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 6 }}>Settlement &amp; verification method</p>
+          {settlementError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {settlementError}</div>}
+          {deal.settlement_status === "agreed" ? (
+            <p style={{ fontSize: 12.5 }}>
+              Both parties agreed on <strong>{SETTLEMENT_METHODS[deal.settlement_method] || deal.settlement_method}</strong>
+              {deal.settlement_note ? ` — "${deal.settlement_note}"` : ""}.
+            </p>
+          ) : showSettlementPicker ? (
+            <>
+              <div className="gnt-field">
+                <label>Method</label>
+                <select value={settlementChoice} onChange={e => setSettlementChoice(e.target.value)}>
+                  {Object.entries(SETTLEMENT_METHODS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                </select>
+                <div className="hint">Recommended for {fmtTerms(deal.terms)}: <strong>{SETTLEMENT_METHODS[recommendSettlementMethod(deal.terms).method]}</strong> — {recommendSettlementMethod(deal.terms).note}</div>
+              </div>
+              <div className="gnt-field"><label>Note to the other party (optional)</label><textarea rows={2} value={settlementNote} onChange={e => setSettlementNote(e.target.value)} placeholder="e.g. Happy with direct payment on a first trial load." /></div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={settlementBusy} onClick={proposeSettlement}>{settlementBusy ? "Sending…" : "Send proposal"}</button>
+                <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => setShowSettlementPicker(false)}>Cancel</button>
+              </div>
+            </>
+          ) : deal.settlement_status === "proposed" ? (
+            deal.settlement_proposed_by === myCompany.id ? (
+              <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>
+                You proposed <strong>{SETTLEMENT_METHODS[deal.settlement_method] || deal.settlement_method}</strong> — waiting on the other party to agree.
+              </p>
+            ) : (
+              <>
+                <p style={{ fontSize: 12.5, marginBottom: 8 }}>
+                  The other party proposed <strong>{SETTLEMENT_METHODS[deal.settlement_method] || deal.settlement_method}</strong>
+                  {deal.settlement_note ? ` — "${deal.settlement_note}"` : ""}.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="gnt-btn gnt-btn-amber gnt-btn-sm" disabled={settlementBusy} onClick={() => respondToSettlement(true)}>Agree</button>
+                  <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" disabled={settlementBusy} onClick={() => respondToSettlement(false)}>Propose a different method</button>
+                </div>
+              </>
+            )
+          ) : (
+            <>
+              <p style={{ fontSize: 12.5, marginBottom: 8 }}>
+                Not agreed yet. Recommended for {fmtTerms(deal.terms)}: <strong>{SETTLEMENT_METHODS[recommendSettlementMethod(deal.terms).method]}</strong> — {recommendSettlementMethod(deal.terms).note}
+              </p>
+              <button className="gnt-btn gnt-btn-amber gnt-btn-sm" onClick={startSettlementPicker}>Propose a method</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {checked && !gated && deal.status !== "completed" && deal.status !== "cancelled" &&
+        !(deal.settlement_status === "agreed" && deal.settlement_method !== "escrow") && (
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
           <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 6 }}>Settlement escrow</p>
           {deal.escrow_agreement_status === "agreed" ? (
@@ -946,6 +1059,8 @@ export default function App() {
   const [customNcndaAckName, setCustomNcndaAckName] = useState("");
   const [bolRequested, setBolRequested] = useState(false);
   const [bolNote, setBolNote] = useState("");
+  const [acceptSettlementMethod, setAcceptSettlementMethod] = useState("");
+  const [acceptSettlementNote, setAcceptSettlementNote] = useState("");
 
   const [adminTab, setAdminTab] = useState("pending");
   const [detailCompany, setDetailCompany] = useState(null);
@@ -2318,6 +2433,8 @@ export default function App() {
     setCustomNcndaAckName("");
     setBolRequested(false);
     setBolNote("");
+    setAcceptSettlementMethod(recommendSettlementMethod(listing.terms).method);
+    setAcceptSettlementNote("");
     if (listing.ncnda_source === "custom") {
       setCustomNcndaLoading(true);
       (async () => {
@@ -2345,6 +2462,11 @@ export default function App() {
     });
     if (error) { setAcceptError(error.message); return; }
     triggerRepConfirmIfNeeded(acceptTarget.company_id);
+    if (acceptSettlementMethod) {
+      await supabase.rpc("propose_settlement_method", {
+        p_deal_id: deal.id, p_method: acceptSettlementMethod, p_note: acceptSettlementNote || null,
+      });
+    }
     const isSellListing = acceptTarget.kind !== "buy";
     let reveal;
     if (isSellListing) {
@@ -3336,7 +3458,7 @@ export default function App() {
               <div>
                 <div className="gnt-eyebrow">Verified Bulk Fuel Trading</div>
                 <h1>Zero friction.<br /><span>Verified before it's visible.</span></h1>
-                <p className="lead">South Africa's bulk diesel market runs on ghost volumes, unverified allocations, and unscreened middlemen. Tankbridge is the compliance layer — connecting CIPC- and DMRE-verified counterparties trading 40,000ℓ+ lots under COC, COD, ITT, or TTO terms. Pricing stays transparent, with commission structures pre-agreed and protected. Proof of Product and Proof of Funds stay exactly where they belong: securely between you and your verified counterparty.</p>
+                <p className="lead">South Africa's bulk diesel market runs on ghost volumes, unverified allocations, and unscreened middlemen. Tankbridge is the compliance layer — connecting CIPC- and DMRE-verified counterparties trading 40,000ℓ+ lots under COC, COD, ITT, TTO or FTT terms. Pricing stays transparent, with commission structures pre-agreed and protected. Proof of Product and Proof of Funds stay exactly where they belong: securely between you and your verified counterparty.</p>
                 <div className="gnt-hero-ctas">
                   <button className="gnt-btn gnt-btn-amber" onClick={resetRegFlow}>Register your company <ChevronRight size={16} /></button>
                   <button className="gnt-btn gnt-btn-outline" onClick={() => goto("market")}>View Market Board</button>
@@ -4728,6 +4850,7 @@ export default function App() {
                 <option value="COD">COD only</option>
                 <option value="ITT">ITT only</option>
                 <option value="TTO">TTO only</option>
+                <option value="FTT">FTT only</option>
               </select>
             </div>
           </div>
@@ -5549,6 +5672,18 @@ export default function App() {
                     <div className="gnt-field"><label>Type your full legal name to sign</label><input value={customNcndaAckName} onChange={e => setCustomNcndaAckName(e.target.value)} placeholder="Full name of signatory" /></div>
                   </div>
                 )}
+                <div className="gnt-card" style={{ marginBottom: 16 }}>
+                  <h4 style={{ fontSize: 14, marginBottom: 6 }}>How will payment and product verification be handled?</h4>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 10 }}>Agreeing this upfront saves days of back-and-forth later. Your choice goes to the other party as a proposal — they can agree or counter (up to 2 rounds each).</p>
+                  <div className="gnt-field">
+                    <label>Proposed method</label>
+                    <select value={acceptSettlementMethod} onChange={e => setAcceptSettlementMethod(e.target.value)}>
+                      {Object.entries(SETTLEMENT_METHODS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                    </select>
+                    <div className="hint">Recommended for {fmtTerms(acceptTarget.terms)}: <strong>{SETTLEMENT_METHODS[recommendSettlementMethod(acceptTarget.terms).method]}</strong> — {recommendSettlementMethod(acceptTarget.terms).note}</div>
+                  </div>
+                  <div className="gnt-field"><label>Note to the other party (optional)</label><textarea rows={2} value={acceptSettlementNote} onChange={e => setAcceptSettlementNote(e.target.value)} placeholder="e.g. Happy with direct payment on a first trial load." /></div>
+                </div>
                 {myCompany?.type === "buyer" && (
                   <div className="gnt-card" style={{ marginBottom: 16 }}>
                     <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, cursor: "pointer" }}>
