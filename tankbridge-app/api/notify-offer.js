@@ -95,14 +95,41 @@ export default async function handler(req, res) {
         ${listing.unit_price ? `<p><strong>Price:</strong> R ${Number(listing.unit_price).toFixed(2)} / litre</p>` : ""}
       `;
 
+      // Saved-search subscribers (Market alerts). Deduplicated by email
+      // against the recipients above, so a company that both has a matching
+      // opposite listing AND a saved search only gets one email.
+      try {
+        const alertRes = await fetch(`${supabaseUrl}/rest/v1/rpc/get_matching_alert_recipients`, {
+          method: "POST",
+          headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_listing_id: listingId }),
+        });
+        if (alertRes.ok) {
+          const subscribers = await alertRes.json();
+          const seenEmails = new Set(recipients.map(r => (r.email || "").toLowerCase()));
+          for (const s of subscribers || []) {
+            const key = (s.email || "").toLowerCase();
+            if (!key || seenEmails.has(key)) continue;
+            seenEmails.add(key);
+            recipients.push({ email: s.email, company_name: s.company_name, forNegotiatorOf: null, viaAlert: true });
+          }
+        } else {
+          console.error("alert recipients lookup failed:", await alertRes.text());
+        }
+      } catch (alertErr) {
+        // Never let alert lookup break the primary notification.
+        console.error("alert recipients lookup error:", alertErr);
+      }
+
       await Promise.all(recipients.map(r => sendResendEmail({
         to: r.email,
         subject,
         html: `
           <h2>New match on the Market Board</h2>
-          <p>${r.company_name}, a company is now ${kindLabel} ${listing.product} that matches ${r.forNegotiatorOf ? `${r.forNegotiatorOf}'s` : "your"} interest.</p>
+          <p>${r.company_name}, a company is now ${kindLabel} ${listing.product} that matches ${r.viaAlert ? "one of your saved Market alerts" : r.forNegotiatorOf ? `${r.forNegotiatorOf}'s interest` : "your interest"}.</p>
           ${summary}
           <p style="margin-top:16px;"><a href="https://tankbridge.co.za/?view=market" style="background:#e39a2d;color:#101b28;padding:11px 18px;text-decoration:none;font-weight:bold;">View on the Market Board</a></p>
+          ${r.viaAlert ? `<p style="font-size:12px;color:#888;margin-top:20px;">You're getting this because of a saved alert — you can remove it under "Market alerts" on your Dashboard.</p>` : ""}
         `,
       })));
 
