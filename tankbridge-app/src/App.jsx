@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Truck, ShieldCheck, Clock, CheckCircle2, XCircle, FileSignature,
-  ChevronRight, ChevronDown, ChevronUp, LogIn, Search, Plus, MapPin, Building2,
+  ChevronRight, LogIn, Search, Plus, MapPin, Building2,
   BadgeCheck, AlertTriangle, ArrowLeft, Mail, Phone, Lock, LogOut, Menu, X, Handshake
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
@@ -917,7 +917,6 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [toast, setToast] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [howItHelpsOpen, setHowItHelpsOpen] = useState(false);
   const [howItHelpsRole, setHowItHelpsRole] = useState("seller");
 
   const [boardListings, setBoardListings] = useState([]);
@@ -1758,7 +1757,6 @@ export default function App() {
   function resetRegFlow() { setRegStep("form"); setRegForm(EMPTY_REG); setRegType("seller"); setRegError(""); setNcndaAgree(false); setNcndaScrolledEnd(false); setUseCustomNcnda(false); setCustomNcndaFile(null); goto("register"); }
   function openHowItHelpsFromNav() {
     goto("landing");
-    setHowItHelpsOpen(true);
     setTimeout(() => { document.getElementById("how-it-helps")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
   }
 
@@ -3559,71 +3557,56 @@ export default function App() {
             </div>
           </section>
 
-          <div className="gnt-steps">
-            <div className="gnt-step">
-              <div className="gnt-step-num">01 — REGISTER</div>
-              <h3>Submit your documents</h3>
-              <p>Buyers and sellers register with CIPC number, DMRE wholesale license, company address and contact details.</p>
-            </div>
-            <div className="gnt-step">
-              <div className="gnt-step-num">02 — VERIFY</div>
-              <h3>Admin review &amp; NCNDA</h3>
-              <p>Every registration is manually checked. Buyers and sellers sign an NCNDA with Tankbridge before approval.</p>
-            </div>
-            <div className="gnt-step">
-              <div className="gnt-step-num">03 — TRADE</div>
-              <h3>Go live on the Market Board</h3>
-              <p>Once approved, buyers and sellers list and browse each other's offers directly — every deal routed through Tankbridge.</p>
-            </div>
-          </div>
+          <div className="gnt-hiw-panel" id="how-it-helps">
+            <div className="gnt-hiw-inner">
+              <div style={{ textAlign: "center", marginBottom: 18 }}>
+                <h2 style={{ fontSize: 30, marginBottom: 6 }}>How it works for you</h2>
+                <p style={{ color: "var(--steel)", fontSize: 14 }}>Pick your side — the whole journey below changes to match, from signing up to getting paid.</p>
+              </div>
+              <div className="gnt-hiw-tabs">
+                {["seller", "buyer", "broker"].map(role => (
+                  <button
+                    key={role}
+                    className={howItHelpsRole === role ? "active" : ""}
+                    onClick={() => setHowItHelpsRole(role)}
+                    type="button"
+                  >
+                    {HOW_IT_HELPS_LABELS[role]}
+                  </button>
+                ))}
+              </div>
 
-          <div className="gnt-hiw-trigger-wrap" id="how-it-helps">
-            <h3>Curious exactly how it works for you?</h3>
-            <p>See the full journey — from registering to getting paid — as a seller, buyer or broker.</p>
-            <button
-              className="gnt-btn gnt-btn-amber gnt-hiw-trigger"
-              onClick={() => setHowItHelpsOpen(v => !v)}
-              type="button"
-            >
-              How it helps my business
-              {howItHelpsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          </div>
-
-          {howItHelpsOpen && (
-            <div className="gnt-hiw-panel">
-              <div className="gnt-hiw-inner">
-                <div className="gnt-hiw-tabs">
-                  {["seller", "buyer", "broker"].map(role => (
-                    <button
-                      key={role}
-                      className={howItHelpsRole === role ? "active" : ""}
-                      onClick={() => setHowItHelpsRole(role)}
-                      type="button"
-                    >
-                      {HOW_IT_HELPS_LABELS[role]}
-                    </button>
-                  ))}
+              {howItHelpsRole === "broker" && (
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 24 }}>
+                  <div style={{ flex: "1 1 260px", background: "#fff", border: "1px solid var(--line)", padding: "18px 20px" }}>
+                    <h3 style={{ fontSize: 17, marginBottom: 6 }}>Got a seller? Got a buyer?</h3>
+                    <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Introduce them — platform fee is just 10%.</p>
+                  </div>
+                  <div style={{ flex: "1 1 260px", background: "#fff", border: "1px solid var(--line)", padding: "18px 20px" }}>
+                    <h3 style={{ fontSize: 17, marginBottom: 6 }}>Haven&apos;t found a match yet?</h3>
+                    <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Post it — up to 70% instead of the usual 50/50.</p>
+                  </div>
                 </div>
-                <div className="gnt-hiw-flow">
-                  {HOW_IT_HELPS[howItHelpsRole].map(step => (
-                    <div className="gnt-hiw-row" key={step.num}>
-                      <div className="gnt-hiw-num">{step.num}</div>
-                      <div>
-                        <h4>{step.title}</h4>
-                        <p className="gnt-hiw-body">{step.body}</p>
-                        <div className="gnt-hiw-benefit"><CheckCircle2 size={15} /> {step.benefit}</div>
-                      </div>
+              )}
+
+              <div className="gnt-hiw-flow">
+                {HOW_IT_HELPS[howItHelpsRole].map(step => (
+                  <div className="gnt-hiw-row" key={step.num}>
+                    <div className="gnt-hiw-num">{step.num}</div>
+                    <div>
+                      <h4>{step.title}</h4>
+                      <p className="gnt-hiw-body">{step.body}</p>
+                      <div className="gnt-hiw-benefit"><CheckCircle2 size={15} /> {step.benefit}</div>
                     </div>
-                  ))}
-                </div>
-                <div className="gnt-hiw-cta">
-                  <p>Ready to see it in action?</p>
-                  <button className="gnt-btn gnt-btn-amber" onClick={resetRegFlow}>Register your company <ChevronRight size={16} /></button>
-                </div>
+                  </div>
+                ))}
+              </div>
+              <div className="gnt-hiw-cta">
+                <p>Ready to see it in action?</p>
+                <button className="gnt-btn gnt-btn-amber" onClick={resetRegFlow}>Register your company <ChevronRight size={16} /></button>
               </div>
             </div>
-          )}
+          </div>
 
           <section className="gnt-section">
             <div className="gnt-section-head">
@@ -3650,44 +3633,6 @@ export default function App() {
                 <Lock size={22} color="#3f6b52" />
                 <h3 style={{ fontSize: 19, margin: "10px 0 6px" }}>Guaranteed Deal Protection</h3>
                 <p style={{ fontSize: 13.5, color: "var(--steel)" }}>Your introductions and commissions are fully safeguarded. Backed by a 24-month non-circumvention framework and strict compliance enforcement. We actively protect broker relationships and penalize bad-faith actors, ensuring your effort always gets paid.</p>
-              </div>
-            </div>
-          </section>
-
-          <section style={{ background: "var(--ink)", margin: "0 -20px", padding: "36px 20px" }}>
-            <div style={{ maxWidth: 900, margin: "0 auto" }}>
-              <h2 style={{ fontSize: 22, marginBottom: 16, color: "var(--paper)" }}>For brokers — introduce once, get paid every time it closes</h2>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 28 }}>
-                <div style={{ flex: "1 1 260px", background: "rgba(236,232,222,0.06)", border: "1px solid rgba(236,232,222,0.15)", padding: "20px 22px" }}>
-                  <h3 style={{ fontSize: 17, color: "var(--paper)", marginBottom: 6 }}>Got a seller? Got a buyer?</h3>
-                  <p style={{ fontSize: 13.5, color: "var(--paper-dark)" }}>Introduce them — platform fee is just 10%.</p>
-                </div>
-                <div style={{ flex: "1 1 260px", background: "rgba(236,232,222,0.06)", border: "1px solid rgba(236,232,222,0.15)", padding: "20px 22px" }}>
-                  <h3 style={{ fontSize: 17, color: "var(--paper)", marginBottom: 6 }}>Haven't found a match yet?</h3>
-                  <p style={{ fontSize: 13.5, color: "var(--paper-dark)" }}>Post it — up to 70% instead of the usual 50/50.</p>
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
-                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>01</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Sign up free and look around — no client details needed. Browse the board and set alerts for the products, locations and prices you work with.</span>
-                </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
-                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>02</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Trading unlocks once a company confirms you actually represent them — that&apos;s what makes a <strong>Verified Mandate</strong> badge worth something, and what keeps people who only claim to hold a mandate off the board.</span>
-                </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
-                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>03</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Your referral is timestamped and logged before either side ever sees a name — and stays protected for 24 months, even on repeat trades.</span>
-                </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
-                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>04</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Keep up to 70% of the commission on matched deals — up to 90% if you brought both sides yourself. Transparent per-litre structure, zero added cost for buyers and sellers, payout only on completed trades.</span>
-                </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
-                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>05</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Settlement runs through an independent third-party escrow, not Tankbridge and not the broker — every party is paid directly and simultaneously, exactly per the recorded split.</span>
-                </div>
               </div>
             </div>
           </section>
