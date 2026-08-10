@@ -9,22 +9,22 @@ import { supabase } from "./supabaseClient";
 
 const HOW_IT_HELPS = {
   seller: [
-    { num: "01", title: "Register & get verified", body: "Submit your company details, CIPC number and DMRE wholesale license. Sign the NCNDA once, upfront.", benefit: "Your buyers are pre-vetted too — no wasted time chasing time-wasters or fake entities." },
+    { num: "01", title: "Register & get verified", body: "Submit your company details, CIPC number and DMRE wholesale license. Only short platform terms at signup — the NCNDA is signed later, when a real counterparty is about to be matched with you.", benefit: "Set Market alerts for the products and locations you supply, and get emailed the moment a matching buyer requirement appears — no need to keep checking the board." },
     { num: "02", title: "List anonymously", body: "Post your product, volume and price. Your company identity stays hidden until a buyer accepts your terms.", benefit: "No exposure to competitors or middlemen fishing for your allocation." },
     { num: "03", title: "Field & negotiate offers", body: "Buyers (or their mandates) submit offers. You counter on price, terms and BOL conditions — up to 2 rounds.", benefit: "You set the final price. Tankbridge never marks it up or takes a cut of it." },
     { num: "04", title: "Deal closes, funds move directly", body: "Once both sides accept, an independent third-party escrow pays each party directly and simultaneously.", benefit: "You get paid on your terms — your funds never pass through Tankbridge." },
     { num: "05", title: "Repeat business stays protected", body: "Commission and referral relationships on your deals are tracked automatically for 24 months.", benefit: "Even on repeat trades, existing broker relationships are honoured — nothing to re-negotiate." },
   ],
   buyer: [
-    { num: "01", title: "Register & get verified", body: "Submit your CIPC registration and company details. Sign the NCNDA once, upfront.", benefit: "Every seller you meet on the board is already CIPC- and DMRE-screened — no ghost allocations." },
+    { num: "01", title: "Register & get verified", body: "Submit your CIPC registration and company details. Only short platform terms at signup — the NCNDA is signed later, at the point a seller\u2019s identity is about to be released to you.", benefit: "Set Market alerts by product, location and max price, and unlock prices marked \u201con request\u201d — every seller you meet is already CIPC- and DMRE-screened." },
     { num: "02", title: "Browse the Market Board", body: "See live listings by product, volume, location and terms (COC, COD, ITT, TTO, FTT) — or post your own requirement.", benefit: "Real, current offers only — not a recycled broker list." },
     { num: "03", title: "Accept or counter", body: "Accept a listed price directly, or submit a counter on price and terms — up to 2 rounds of negotiation.", benefit: "You negotiate direct with the seller, with no broker inflating the price in the middle." },
     { num: "04", title: "Deal locked, escrow handles payment", body: "Once agreed, an independent third-party escrow pays the seller directly, exactly per the accepted terms.", benefit: "Your funds only move on your terms — Tankbridge never touches or holds them." },
     { num: "05", title: "Trade again, faster", body: "Your verified status and counterparty history stay on file for next time.", benefit: "Every following deal is faster — no repeating due diligence from scratch." },
   ],
   broker: [
-    { num: "01", title: "Register & get approved", body: "Sign up as a broker or mandate holder. Tankbridge admin reviews and approves you once.", benefit: "One-time approval, then refer as many deals as you can find." },
-    { num: "02", title: "Introduce a buyer or seller", body: "Know a company directly? Enter what you have. Don't, but know who does? Hand off to their actual mandate.", benefit: "Your introduction is timestamped and logged before either side ever sees a name — your claim is protected from day one." },
+    { num: "01", title: "Sign up free — no client details needed", body: "Register with just your own company details. Browse the board and set Market alerts straight away; you don\u2019t have to name a buyer or seller to join.", benefit: "You can size up the platform before handing over anything from your own network." },
+    { num: "02", title: "Refer someone, become a Verified Mandate", body: "Know a company directly? Enter what you have. Don't, but know who does? Hand off to their actual mandate. Tankbridge asks that company to confirm you represent them, then admin activates trading on your account.", benefit: "Your introduction is timestamped before either side sees a name — and the badge tells counterparties you\u2019re the real mandate, not someone who says they know someone." },
     { num: "03", title: "Negotiate on their behalf", body: "If authorised as a mandate, counter price and commission split in real time, with a live payout preview.", benefit: "You can actively work the deal, not just wait on the sidelines for a yes." },
     { num: "04", title: "Deal closes, you're paid directly", body: "Your commission share pays out through an independent third-party escrow, straight to you.", benefit: "You keep up to 70% of the commission on matched deals — up to 90% if you introduced both sides yourself. No chasing payment through Tankbridge or the other side's broker — escrow pays everyone at once." },
     { num: "05", title: "Covered for 24 months", body: "Every relationship you introduce is automatically tracked for 24 months, even across repeat deals.", benefit: "If they trade again without a new referral, your commission still applies automatically." },
@@ -3670,22 +3670,51 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>01</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Introduce a buyer or seller once — Tankbridge verifies them and invites them to register.</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Sign up free and look around — no client details needed. Browse the board and set alerts for the products, locations and prices you work with.</span>
                 </div>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>02</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Your referral is timestamped and logged before either side ever sees a name.</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Trading unlocks once a company confirms you actually represent them — that&apos;s what makes a <strong>Verified Mandate</strong> badge worth something, and what keeps people who only claim to hold a mandate off the board.</span>
                 </div>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>03</span>
-                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Earn 70% direct commission on your deals, backed by a transparent per-litre structure. Platform share supports network matching and cross-broker referrals — ensuring zero added cost for buyers and sellers, and guaranteed payout only on completed trades.</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Your referral is timestamped and logged before either side ever sees a name — and stays protected for 24 months, even on repeat trades.</span>
                 </div>
                 <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
                   <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>04</span>
+                  <span style={{ fontSize: 14, color: "var(--paper)" }}>Keep up to 70% of the commission on matched deals — up to 90% if you brought both sides yourself. Transparent per-litre structure, zero added cost for buyers and sellers, payout only on completed trades.</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
+                  <span className="mono" style={{ color: "var(--amber)", fontSize: 12.5 }}>05</span>
                   <span style={{ fontSize: 14, color: "var(--paper)" }}>Settlement runs through an independent third-party escrow, not Tankbridge and not the broker — every party is paid directly and simultaneously, exactly per the recorded split.</span>
                 </div>
               </div>
             </div>
+          </section>
+
+          <section className="gnt-section">
+            <div className="gnt-section-head">
+              <h2>What you get by registering</h2>
+              <p>Anyone can browse the Market Board. An account is what turns it from a noticeboard into something that works for you.</p>
+            </div>
+            <div className="gnt-grid2">
+              <div className="gnt-card">
+                <h3 style={{ fontSize: 18, marginBottom: 10 }}>Just browsing</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)", margin: "4px 0" }}>✓ See every live listing — product, volume, location, terms</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel-soft)", margin: "4px 0" }}>✗ No alerts — you only see what's there when you happen to look</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel-soft)", margin: "4px 0" }}>✗ Can't see prices marked "on request"</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel-soft)", margin: "4px 0" }}>✗ Can't accept, counter, or negotiate</p>
+              </div>
+              <div className="gnt-card" style={{ borderColor: "var(--amber)", borderWidth: 2 }}>
+                <h3 style={{ fontSize: 18, marginBottom: 10 }}>Registered</h3>
+                <p style={{ fontSize: 13.5, color: "var(--steel)", margin: "4px 0" }}>✓ <strong>Market alerts</strong> — get emailed the moment a listing matches your product, location and price</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)", margin: "4px 0" }}>✓ Request prices that aren't published, and see them instantly</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)", margin: "4px 0" }}>✓ Accept or counter directly — up to 2 rounds, price and commission together</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)", margin: "4px 0" }}>✓ Send a listing straight to someone you know, by email or WhatsApp</p>
+                <p style={{ fontSize: 13.5, color: "var(--steel)", margin: "4px 0" }}>✓ Your introductions protected for 24 months, tracked automatically</p>
+              </div>
+            </div>
+            <p className="hint" style={{ marginTop: 12 }}>Registering costs nothing, and the NCNDA isn't signed until you're actually about to be matched with a counterparty.</p>
           </section>
 
           <section style={{ background: "var(--ink)", color: "var(--paper)", margin: "0 -20px", padding: "56px 20px", textAlign: "center" }}>
