@@ -133,6 +133,7 @@ const EMPTY_REG = {
   // broker-only: the first referral they submit as part of registering
   referredType: "seller", referredCompanyName: "", referredCipc: "", referredDmreLicense: "", referredEmail: "", proposedCommissionRate: "10",
   hasDirectRelationship: true, upstreamBrokerName: "", upstreamBrokerEmail: "", coBrokerShareMode: "percentage", coBrokerSplitPct: "0.50", coBrokerFixedAmount: "",
+  addReferralNow: false,
 };
 const EMPTY_LISTING = { product: PRODUCTS[0], volume: "", unitPrice: "", terms: [], location: "", availability: "", notes: "", procedures: {}, bolTerms: "not_offered", priceMode: "fixed", validUntil: "", whileStockLasts: false, priceVisibility: "public" };
 const EMPTY_REFERRAL = {
@@ -940,6 +941,10 @@ export default function App() {
   const [myReferrals, setMyReferrals] = useState([]);
   const [companyListingsMap, setCompanyListingsMap] = useState({});
   const [myBrokerCommissions, setMyBrokerCommissions] = useState([]);
+  const [myAlerts, setMyAlerts] = useState([]);
+  const [alertForm, setAlertForm] = useState({ kind: "sell", product: "", location: "", maxPrice: "" });
+  const [alertError, setAlertError] = useState("");
+  const [alertBusy, setAlertBusy] = useState(false);
   const [referralForm, setReferralForm] = useState(EMPTY_REFERRAL);
   const [referralError, setReferralError] = useState("");
   const [referralAgree, setReferralAgree] = useState(false);
@@ -1400,6 +1405,12 @@ export default function App() {
     setMyDocuments(data || []);
   }, [myCompany]);
 
+  const loadMyAlerts = useCallback(async () => {
+    if (!myCompany) { setMyAlerts([]); return; }
+    const { data } = await supabase.from("market_alerts").select("*").eq("company_id", myCompany.id).order("created_at", { ascending: false });
+    setMyAlerts(data || []);
+  }, [myCompany]);
+
   const loadMyBrokerCommissions = useCallback(async () => {
     if (!myCompany || myCompany.type !== "broker") { setMyBrokerCommissions([]); return; }
     const { data } = await supabase.from("deal_broker_commissions").select("*, deals(product, volume, unit_price, created_at, seller_company_id, buyer_company_id)")
@@ -1423,12 +1434,12 @@ export default function App() {
   }, [myCompany]);
 
   useEffect(() => {
-    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments(); loadMyBrokerCommissions(); loadMyOffers();
+    loadMyListings(); loadMyDeals(); loadMyReferrals(); loadMyDocuments(); loadMyBrokerCommissions(); loadMyOffers(); loadMyAlerts();
     if (myCompany) setRefForm({
       ref1Company: myCompany.trade_ref_1_company || "", ref1Contact: myCompany.trade_ref_1_contact || "",
       ref2Company: myCompany.trade_ref_2_company || "", ref2Contact: myCompany.trade_ref_2_contact || "",
     });
-  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, loadMyBrokerCommissions, loadMyOffers, myCompany]);
+  }, [loadMyListings, loadMyDeals, loadMyReferrals, loadMyDocuments, loadMyBrokerCommissions, loadMyOffers, loadMyAlerts, myCompany]);
 
   // ---------- ADMIN DATA ----------
   const loadAdminData = useCallback(async () => {
@@ -1473,6 +1484,11 @@ export default function App() {
     }
 
     if (regType === "broker") {
+      // The first referral is now optional at signup — a broker can join,
+      // look around, and refer someone later from their Dashboard. Only
+      // validate the referral fields if they actually opted to add one now.
+      if (!regForm.addReferralNow) return "";
+
       if (!regForm.hasDirectRelationship) {
         if (!regForm.referredCompanyName) return "Please enter the company's name (best known).";
         if (!regForm.tradeVolume || !regForm.tradePrice) return "Please enter the volume and price for this referral.";
@@ -1563,6 +1579,7 @@ export default function App() {
       });
       if (listingError) console.error("initial listing insert error", listingError);
     }
+    if (regType === "broker" && !regForm.addReferralNow) return;
     if (regType === "broker" && !regForm.hasDirectRelationship) {
       const { data: refData, error: refError } = await supabase.from("referrals").insert({
         broker_company_id: companyId,
@@ -1978,6 +1995,32 @@ export default function App() {
     setImfpaCommissionRate("10");
     setImfpaJustSigned(true);
     showToast(`IMFPA signed at ${Math.round(rate * 100)}c/ℓ — buyer contact details on matched deals are now released.`);
+  }
+
+  async function submitAlert(e) {
+    e.preventDefault();
+    if (!alertForm.product && !alertForm.location && !alertForm.maxPrice) {
+      setAlertError("Set at least one condition, otherwise you'll be emailed about every single listing."); return;
+    }
+    setAlertBusy(true);
+    setAlertError("");
+    const { error } = await supabase.from("market_alerts").insert({
+      company_id: myCompany.id,
+      kind: alertForm.kind,
+      product: alertForm.product || null,
+      location: alertForm.location || null,
+      max_price: alertForm.maxPrice ? Number(alertForm.maxPrice) : null,
+    });
+    setAlertBusy(false);
+    if (error) { setAlertError(error.message); return; }
+    setAlertForm({ kind: "sell", product: "", location: "", maxPrice: "" });
+    await loadMyAlerts();
+    showToast("Alert saved — we'll email you when a matching listing goes live.");
+  }
+
+  async function deleteAlert(id) {
+    await supabase.from("market_alerts").delete().eq("id", id);
+    await loadMyAlerts();
   }
 
   // ---------- REFERRALS (broker) ----------
@@ -2557,6 +2600,14 @@ export default function App() {
     await loadAdminData();
     setDetailCompany(c => c && ({ ...c, product_verified: !company.product_verified }));
     showToast(`Product Verified badge ${!company.product_verified ? "granted" : "revoked"}.`);
+  }
+
+  async function toggleBrokerVerified(company) {
+    const { error } = await supabase.rpc("set_broker_verified", { p_company_id: company.id, p_verified: !company.broker_verified });
+    if (error) { showToast(error.message, "err"); return; }
+    await loadAdminData();
+    setDetailCompany(c => c && ({ ...c, broker_verified: !company.broker_verified }));
+    showToast(`Trading ${!company.broker_verified ? "activated" : "deactivated"} for ${company.company_name}.`);
   }
 
   function startAdminEditCompany(company) {
@@ -3718,8 +3769,13 @@ export default function App() {
 
                 {regType === "broker" ? (
                   <>
-                    <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>Who are you introducing?</h3>
-                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 8 }}>You can add more buyer/seller referrals from your Dashboard later — this is just your first one.</p>
+                    <h3 style={{ fontSize: 20, margin: "22px 0 4px" }}>Introduce someone now? (optional)</h3>
+                    <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 12 }}>You don't have to. Sign up first, look around the Market Board, set up alerts — and refer a buyer or seller from your Dashboard whenever you're ready. Your first confirmed referral is what activates trading on your account.</p>
+                    <div className="gnt-type-toggle" style={{ marginBottom: 18 }}>
+                      <button type="button" className={!regForm.addReferralNow ? "active" : ""} onClick={() => updateReg("addReferralNow", false)}>Just sign me up for now</button>
+                      <button type="button" className={regForm.addReferralNow ? "active" : ""} onClick={() => updateReg("addReferralNow", true)}>I'll add a referral now</button>
+                    </div>
+                    {regForm.addReferralNow && (<>
                     {regForm.referredType === "seller" ? (
                       <p style={{ fontSize: 12, color: "var(--steel-soft)", marginBottom: 12 }}><strong>Referring a seller:</strong> you'll need their Wholesale License copy and an asking price (commission included) already agreed with them. They'll get an email to confirm before anything goes live.</p>
                     ) : (
@@ -3801,6 +3857,7 @@ export default function App() {
                         <TermsCheckboxGroup value={regForm.tradeTerms} onChange={v => updateReg("tradeTerms", v)} />
                       </div>
                     </div>
+                    </>)}
                   </>
                 ) : (
                   <>
@@ -4078,6 +4135,66 @@ export default function App() {
                   </form>
                 )}
               </div>
+
+              {myCompany.status === "approved" && myCompany.type === "broker" && !myCompany.broker_verified && (
+                <div className="gnt-card" style={{ marginBottom: 26 }}>
+                  <h3 style={{ fontSize: 18, marginBottom: 6 }}>Trading not activated yet</h3>
+                  <p style={{ fontSize: 12.5, color: "var(--steel)", marginBottom: 10 }}>
+                    You can browse the Market Board, set up alerts, and share listings right now. To submit offers, counter prices or request a hidden price, your account needs <strong>Verified Mandate</strong> status.
+                  </p>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)" }}>
+                    How to get it: refer a buyer or seller below. Tankbridge emails that company to confirm you actually represent them — once they confirm, admin activates trading on your account. This is what stops anyone from claiming to hold a mandate they don't.
+                  </p>
+                </div>
+              )}
+
+              {myCompany.status === "approved" && (
+                <div className="gnt-card" style={{ marginBottom: 26 }}>
+                  <h3 style={{ fontSize: 18, marginBottom: 6 }}>Market alerts</h3>
+                  <p style={{ fontSize: 12.5, color: "var(--steel-soft)", marginBottom: 14 }}>Get emailed the moment a matching listing goes live, instead of checking the board. Set at least one condition — leave the rest blank to match anything.</p>
+                  {alertError && <div className="gnt-alert-banner"><AlertTriangle size={16} /> {alertError}</div>}
+                  <form onSubmit={submitAlert}>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>I want to hear about</label>
+                        <select value={alertForm.kind} onChange={e => setAlertForm(f => ({ ...f, kind: e.target.value }))}>
+                          <option value="sell">Sell offers</option>
+                          <option value="buy">Buy requirements</option>
+                          <option value="any">Both</option>
+                        </select>
+                      </div>
+                      <div className="gnt-field"><label>Product (optional)</label>
+                        <select value={alertForm.product} onChange={e => setAlertForm(f => ({ ...f, product: e.target.value }))}>
+                          <option value="">Any product</option>
+                          {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="gnt-grid2">
+                      <div className="gnt-field"><label>Location (optional)</label><input value={alertForm.location} onChange={e => setAlertForm(f => ({ ...f, location: e.target.value }))} placeholder="e.g. Durban" /></div>
+                      <div className="gnt-field"><label>Max price, R/litre (optional)</label><input type="number" min="0" step="0.01" value={alertForm.maxPrice} onChange={e => setAlertForm(f => ({ ...f, maxPrice: e.target.value }))} placeholder="e.g. 20.00" />
+                        <div className="hint">Listings with the price hidden ("on request") always come through, since their price isn't published.</div>
+                      </div>
+                    </div>
+                    <button className="gnt-btn gnt-btn-amber gnt-btn-sm" type="submit" disabled={alertBusy}>{alertBusy ? "Saving…" : "Save alert"}</button>
+                  </form>
+
+                  {myAlerts.length > 0 && (
+                    <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+                      {myAlerts.map(a => (
+                        <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", borderBottom: "1px dashed var(--line)" }}>
+                          <span>
+                            {a.kind === "any" ? "Buying & selling" : a.kind === "sell" ? "Sell offers" : "Buy requirements"}
+                            {a.product ? ` · ${a.product}` : " · any product"}
+                            {a.location ? ` · ${a.location}` : ""}
+                            {a.max_price ? ` · up to ${fmtMoney(a.max_price)}/ℓ` : ""}
+                          </span>
+                          <button className="gnt-btn gnt-btn-ghost gnt-btn-sm" onClick={() => deleteAlert(a.id)}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {myCompany.status === "approved" && myCompany.referred_by_broker_id && (
                 <div className="gnt-card" style={{ marginBottom: 26 }}>
@@ -4968,7 +5085,7 @@ export default function App() {
                     {(adminTab === "pending" ? pendingCompanies : adminTab === "approved" ? approvedCompanies : rejectedCompanies).map(c => (
                       <tr key={c.id}>
                         <td><strong>{c.company_name}</strong>{c.account_status && c.account_status !== "active" && <span className="gnt-badge rejected" style={{ marginLeft: 6, fontSize: 10 }}>{c.account_status.replace(/_/g, " ")}</span>}<br /><span style={{ fontSize: 11.5, color: "var(--steel-soft)" }}>{c.email}</span></td>
-                        <td style={{ textTransform: "capitalize" }}>{c.type}</td>
+                        <td style={{ textTransform: "capitalize" }}>{c.type}{c.type === "broker" && !c.broker_verified && <><br /><span className="gnt-badge pending" style={{ fontSize: 10 }}>trading not activated</span></>}</td>
                         <td className="mono">{c.cipc}</td>
                         <td className="mono">{c.dmre_license}</td>
                         <td>{c.ncnda_signed ? <span style={{ color: "var(--verified)" }}>Signed</span> : <span style={{ color: "var(--alert)" }}>Missing</span>}</td>
@@ -5397,6 +5514,11 @@ export default function App() {
             )}
 
             <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              {detailCompany.type === "broker" && (
+                <button className={`gnt-btn gnt-btn-sm ${detailCompany.broker_verified ? "gnt-btn-ghost" : "gnt-btn-amber"}`} onClick={() => toggleBrokerVerified(detailCompany)}>
+                  {detailCompany.broker_verified ? "Deactivate trading (revoke Verified Mandate)" : "Activate trading (grant Verified Mandate)"}
+                </button>
+              )}
               <button className={`gnt-btn gnt-btn-sm ${detailCompany.past_performance_verified ? "gnt-btn-ghost" : "gnt-btn-amber"}`} onClick={() => togglePastPerformanceVerified(detailCompany)}>
                 {detailCompany.past_performance_verified ? "Revoke Past Performance badge" : "Grant Past Performance badge"}
               </button>
